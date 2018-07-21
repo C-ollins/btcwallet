@@ -7,6 +7,7 @@ package wallet
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/decred/dcrd/chaincfg/chainhash"
@@ -172,6 +173,13 @@ type RescannedBlock struct {
 func (w *Wallet) rescan(ctx context.Context, n NetworkBackend,
 	startHash *chainhash.Hash, height int32, p chan<- RescanProgress) error {
 
+	//log.Info("Wallet is rescanning")
+	w.NtfnServer.NotifyProcess(w.PrepareNotification("Rescan", 0))
+	defer func() {
+		//log.Info("Wallet has finished rescanning")
+		w.NtfnServer.NotifyProcess(w.PrepareNotification("Rescan", 2))
+	}()
+
 	blockHashStorage := make([]chainhash.Hash, maxBlocksPerRescan)
 	rescanFrom := *startHash
 	inclusive := true
@@ -207,6 +215,8 @@ func (w *Wallet) rescan(ctx context.Context, n NetworkBackend,
 			}
 		}
 		log.Infof("Rescanning block range [%v, %v]...", height, through)
+		//log.Infof("Scanning %v of %v", height, through)
+		w.NtfnServer.NotifyProcess(w.PrepareNotification("Rescan", 1, strconv.Itoa(int(height)), strconv.Itoa(int(through))))
 		rescanResults, err := n.Rescan(ctx, rescanBlocks)
 		if err != nil {
 			return err
