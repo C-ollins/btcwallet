@@ -21,6 +21,7 @@ import (
 	"github.com/decred/dcrwallet/internal/prompt"
 	"github.com/decred/dcrwallet/loader"
 	"github.com/decred/dcrwallet/wallet"
+	_ "github.com/decred/dcrwallet/wallet/drivers/badgerdb"
 	_ "github.com/decred/dcrwallet/wallet/drivers/bdb"
 	"github.com/decred/dcrwallet/walletseed"
 )

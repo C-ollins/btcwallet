@@ -244,10 +244,11 @@ func (s *Store) unminedTxRecords(ns walletdb.ReadBucket) (map[chainhash.Hash]*Tx
 		if err != nil {
 			return err
 		}
-
+		//log.Info("TxHash Unmined:", txHash.String())
 		rec := new(TxRecord)
 		err = readRawTxRecord(&txHash, v, rec)
 		if err != nil {
+			//log.Info("Could Read Raw Tx Record: ", v)
 			return err
 		}
 

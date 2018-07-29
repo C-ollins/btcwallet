@@ -15,6 +15,7 @@ import (
 	"github.com/decred/dcrwallet/errors"
 	"github.com/decred/dcrwallet/ticketbuyer"
 	"github.com/decred/dcrwallet/wallet"
+	_ "github.com/decred/dcrwallet/wallet/drivers/badgerdb"
 	_ "github.com/decred/dcrwallet/wallet/drivers/bdb" // driver loaded during init
 )
 
@@ -151,7 +152,7 @@ func (l *Loader) CreateWatchingOnlyWallet(extendedPubKey string, pubPass []byte)
 	if err != nil {
 		return nil, errors.E(op, err)
 	}
-	db, err := wallet.CreateDB("bdb", dbPath)
+	db, err := wallet.CreateDB("badgerdb", dbPath)
 	if err != nil {
 		return nil, errors.E(op, err)
 	}
@@ -242,7 +243,7 @@ func (l *Loader) CreateNewWallet(pubPassphrase, privPassphrase, seed []byte) (w 
 	if err != nil {
 		return nil, errors.E(op, err)
 	}
-	db, err := wallet.CreateDB("bdb", dbPath)
+	db, err := wallet.CreateDB("badgerdb", dbPath)
 	if err != nil {
 		return nil, errors.E(op, err)
 	}
@@ -252,7 +253,7 @@ func (l *Loader) CreateNewWallet(pubPassphrase, privPassphrase, seed []byte) (w 
 	if err != nil {
 		return nil, errors.E(op, err)
 	}
-
+	
 	// Open the newly-created wallet.
 	so := l.stakeOptions
 	cfg := &wallet.Config{
@@ -297,7 +298,7 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte) (w *wallet.Wallet, rer
 
 	// Open the database using the boltdb backend.
 	dbPath := filepath.Join(l.dbDirPath, walletDbName)
-	db, err := wallet.OpenDB("bdb", dbPath)
+	db, err := wallet.OpenDB("badgerdb", dbPath)
 	if err != nil {
 		log.Errorf("Failed to open database: %v", err)
 		return nil, errors.E(op, err)
