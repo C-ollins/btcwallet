@@ -75,8 +75,10 @@ func (tx *transaction) CreateTopLevelBucket(key []byte) (walletdb.ReadWriteBucke
 
 func (tx *transaction) DeleteTopLevelBucket(key []byte) error {
 	//fmt.Println("DeleteTopLevelBucket")
-	it := tx.badgerTx.NewIterator(badger.DefaultIteratorOptions)
-	defer it.Close()
+	if tx.iterator == nil{
+		tx.iterator = tx.badgerTx.NewIterator(badger.DefaultIteratorOptions)
+	}
+	it := tx.iterator
 	for it.Seek(key); it.ValidForPrefix(key); it.Next() {
 		tx.badgerTx.Delete(it.Item().Key())
 	}
@@ -98,27 +100,11 @@ func (tx *transaction) Commit() error {
 		tx.iterator.Close()
 	}
 
-	writeable := tx.writable
 	err := tx.badgerTx.Commit(nil)
 	if err != nil {
 		fmt.Println("Transaction commit error: ", err)
 		return err
 	}
-	if true {
-		return nil
-	}
-	tx.badgerTx = tx.db.NewTransaction(writeable)
-	for _, b := range tx.buckets {
-		b.SetTx(tx.badgerTx)
-	}
-	opts := badger.DefaultIteratorOptions
-	opts.PrefetchSize = 5
-	tx.iterator = tx.badgerTx.NewIterator(opts)
-	//fmt.Println("Commit Tx 2: ", &tx.badgerTx)
-	// for _, b := range tx.buckets {
-	// 	b.CloseCursor()
-	// }
-	//fmt.Println("Transaction commit successful")
 	return nil
 }
 
@@ -128,9 +114,6 @@ func (tx *transaction) Commit() error {
 // This function is part of the walletdb.Tx interface implementation.
 func (tx *transaction) Rollback() error {
 	writeable := tx.writable
-	//	for _, b := range tx.buckets {
-	//		b.CloseCursor()
-	//	}
 	if tx.iterator != nil {
 		tx.iterator.Close()
 	}
@@ -142,7 +125,6 @@ func (tx *transaction) Rollback() error {
 	opts := badger.DefaultIteratorOptions
 	opts.PrefetchSize = 5
 	tx.iterator = tx.badgerTx.NewIterator(opts)
-	//fmt.Println("Rollback 2:", &tx.badgerTx)
 	return nil
 }
 
@@ -276,7 +258,7 @@ type cursor Cursor
 //
 // This function is part of the walletdb.Cursor interface implementation.
 func (c *cursor) Delete() error {
-	//fmt.Println("Delete")
+	fmt.Println("Cursor Delete")
 	if (*Cursor)(c).iterator.ValidForPrefix(c.key) {
 		item := (*Cursor)(c).iterator.Item()
 		return (*Cursor)(c).txn.Delete(item.Key())
@@ -346,7 +328,7 @@ func (c *cursor) Next() (key, value []byte) {
 //
 // This function is part of the walletdb.Cursor interface implementation.
 func (c *cursor) Prev() (key, value []byte) {
-	fmt.Println("Prev")
+	fmt.Println("Cursor Prev")
 	//Not Yet Implemented
 	return nil, nil
 }

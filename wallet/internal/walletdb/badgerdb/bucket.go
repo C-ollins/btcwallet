@@ -41,9 +41,9 @@ func newBucket(tx *badger.Txn, badgerKey []byte, dbTx *transaction) (*Bucket, er
 	item, err := tx.Get(badgerKey)
 	if err != nil {
 		//Not Found
-		err = tx.SetWithMeta(badgerKey, nil, MetaBucket)
+		err = tx.SetWithMeta(badgerKey, insertPrefixLength([]byte{}, len(badgerKey)), MetaBucket)
 		if err != nil {
-			fmt.Println("Unable to set with meta:", err, "key:", badgerKey)
+			fmt.Println("Unable to set with meta:", err, "key:", string(badgerKey))
 			return nil, err
 		}
 		return &Bucket{txn: tx, key: prefix, dbTransaction: dbTx}, nil
@@ -130,15 +130,6 @@ func (b *Bucket) BadgerCursor() *Cursor {
 	return cursor
 }
 
-func (b *Bucket) CloseCursor() {
-	if b.cursor != nil {
-		//fmt.Println("Closing Cursor", string(b.key))
-		//b.cursor.iterator.Close()
-		//fmt.Printf("Cursor %s Closed\n", b.key)
-		b.cursor = nil
-	}
-}
-
 //Nested Bucket
 func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 	if len(key) == 0 {
@@ -218,11 +209,14 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 func Dump(b *Bucket, key []byte) {
 	it := b.txn.NewIterator(badger.DefaultIteratorOptions)
 	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
+	for it.Seek(key); it.ValidForPrefix(key); it.Next() {
 		item := it.Item()
 		k := item.Key()
-
-		fmt.Printf("key=%s, meta=%v, Equal to %s: %v\n", k, item.UserMeta(), key, bytes.Equal(k, key))
+		val, _ := item.Value()
+		prefixLength := int(val[0])
+		if prefixLength == len(key) {
+			fmt.Printf("key=%s, meta=%v, Key bytes %v: %v\n", k, item.UserMeta(), key, item.Key())
+		}
 	}
 }
 
@@ -264,49 +258,19 @@ func (b *Bucket) RetrieveBucket(key []byte) *Bucket {
 		//Key is not associated with a bucket
 		return nil
 	}
-
-	// it := b.Iterator()
-	// defer it.Close()
-	// it.Seek(k)
-	// // Return nil if there isn't an existing key.
-	// if bytes.Equal(k, it.Item().Key()) {
-	// 	item := it.Item()
-	// 	if item.UserMeta() == MetaBucket {
-	// 		//Retrieve bucket
-	// 		bucket, err := newBucket(b.txn, k)
-	// 		if err != nil {
-	// 			return nil
-	// 		}
-	// 		b.buckets = append(b.buckets, bucket)
-	// 		return bucket
-	// 	}
-	// }
-	// return nil
 }
 
 func (b *Bucket) DropBucket(key []byte) error {
 	fmt.Println("Drop Bucket:", string(key))
-	key, err := addPrefix(b.key, key)
+	prefix, err := addPrefix(b.key, key)
 	if err != nil {
 		return err
 	}
-	item, err := b.txn.Get(key)
-	if err != nil {
-		return err
+	it := b.Iterator()
+	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		fmt.Println("Deleting bucket: ", string(it.Item().Key()), "Prefix: ", string(prefix))
+		b.txn.Delete(it.Item().Key())
 	}
-	err = b.txn.Delete(item.Key())
-	if err != nil {
-		return err
-	}
-	// it := b.Iterator()
-	// defer it.Close()
-	// for it.Seek(key); it.ValidForPrefix(key); it.Next() {
-	// 	item := it.Item()
-	// 	err = b.txn.Delete(item.Key())
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
 	return nil
 }
 
@@ -362,11 +326,11 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 	if len(key) == 0 {
 		fmt.Println("Put Key is empty")
 		//Key empty
-		return nil
+		return errors.E(errors.Invalid, "Key is empty")
 	} else if len(key) > MaxKeySize {
 		fmt.Println("Put Key is large")
 		//Key too large
-		return nil
+		return errors.E(errors.Invalid, "Key is empty")
 	}
 	k, err := addPrefix(b.key, key)
 	if err != nil {
@@ -400,20 +364,40 @@ func (b *Bucket) ForEach(fn func(k, v []byte) error) error {
 	it := b.Iterator()
 	defer it.Close()
 	prefix := b.key
-	it.Rewind()
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 		item := it.Item()
+		//Return only key for nested buckets found in bucket
 		if item.UserMeta() == MetaBucket {
+			v, err := item.Value()
+			if err != nil {
+				return err
+			}
+			prefixLength := int(v[0])
+			itemPrefix := item.Key()[:prefixLength]
+			// Check if we have the right item and not the bucket we're iterating through.
+			// Also check if the item prefix matches the prefix specified
+			if !bytes.Equal(item.Key(), prefix) && bytes.Equal(itemPrefix, prefix) {
+				if err := fn(item.Key()[prefixLength:], nil); err != nil {
+					fmt.Println("Loop returning error")
+					return err
+				}
+			} else {
+				fmt.Println("Not a match. Key: ", string(item.Key()), "Item Prefix:", string(itemPrefix))
+			}
 			continue
 		}
+
 		k := item.Key()
 		v, err := item.Value()
 		if err != nil {
 			return err
 		}
+
 		prefixLength := int(v[0])
-		if err := fn(k[prefixLength:], v[1:]); err != nil {
-			return err
+		if prefixLength == len(prefix) {
+			if err := fn(k[prefixLength:], v[1:]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
