@@ -278,6 +278,7 @@ func votingPreferencesUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) 
 	// all per-ticket vote bits.
 	ticketPurchases := make(map[chainhash.Hash]*sstxRecord)
 	c := ticketPurchasesBucket.ReadCursor()
+	defer c.Close()
 	for k, _ := c.First(); k != nil; k, _ = c.Next() {
 		var hash chainhash.Hash
 		copy(hash[:], k)
@@ -419,6 +420,7 @@ func ticketBucketUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) error
 	// unknown at this time and the field is not yet being used.
 	ticketHashes := make(map[chainhash.Hash]struct{})
 	c := txmgrBucket.NestedReadBucket(bucketTxRecords).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); v != nil; k, v = c.Next() {
 		var hash chainhash.Hash
 		err := readRawTxRecordHash(k, &hash)
@@ -435,6 +437,7 @@ func ticketBucketUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) error
 		}
 	}
 	c = txmgrBucket.NestedReadBucket(bucketUnmined).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); v != nil; k, v = c.Next() {
 		var hash chainhash.Hash
 		err := readRawUnminedHash(k, &hash)
@@ -507,6 +510,7 @@ func hasExpiryUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) error {
 	creditsBucket := txmgrBucket.NestedReadWriteBucket(bucketCredits)
 	cursor := creditsBucket.ReadWriteCursor()
 	creditsKV := map[string][]byte{}
+	defer cursor.Close()
 	for k, v := cursor.First(); v != nil; k, v = cursor.Next() {
 		hash := extractRawCreditTxHash(k)
 		block, err := fetchBlockRecord(txmgrBucket, extractRawCreditHeight(k))
@@ -542,6 +546,7 @@ func hasExpiryUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) error {
 	unminedCreditsBucket := txmgrBucket.NestedReadWriteBucket(bucketUnminedCredits)
 	unminedCursor := unminedCreditsBucket.ReadWriteCursor()
 	unminedCreditsKV := map[string][]byte{}
+	defer unminedCursor.Close()
 	for k, v := unminedCursor.First(); v != nil; k, v = unminedCursor.Next() {
 		hash, err := chainhash.NewHash(extractRawUnminedCreditTxHash(k))
 		if err != nil {
@@ -594,6 +599,7 @@ func hasExpiryFixedUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) err
 	creditsBucket := txmgrBucket.NestedReadWriteBucket(bucketCredits)
 	cursor := creditsBucket.ReadCursor()
 	creditsKV := map[string][]byte{}
+	defer cursor.Close()
 	for k, v := cursor.First(); v != nil; k, v = cursor.Next() {
 		hash := extractRawCreditTxHash(k)
 		block, err := fetchBlockRecord(txmgrBucket, extractRawCreditHeight(k))
@@ -638,6 +644,7 @@ func hasExpiryFixedUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte) err
 	unminedCreditsBucket := txmgrBucket.NestedReadWriteBucket(bucketUnminedCredits)
 	unminedCursor := unminedCreditsBucket.ReadCursor()
 	unminedCreditsKV := map[string][]byte{}
+	defer unminedCursor.Close()
 	for k, v := unminedCursor.First(); v != nil; k, v = unminedCursor.Next() {
 		hash, err := chainhash.NewHash(extractRawUnminedCreditTxHash(k))
 		if err != nil {

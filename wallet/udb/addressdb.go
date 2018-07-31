@@ -1158,6 +1158,7 @@ func forEachAccountAddress(ns walletdb.ReadBucket, account uint32, fn func(rowIn
 	}
 
 	c := bucket.ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Skip buckets.
 		if v == nil {
@@ -1181,6 +1182,7 @@ func forEachAccountAddress(ns walletdb.ReadBucket, account uint32, fn func(rowIn
 func forEachActiveAddress(ns walletdb.ReadBucket, fn func(rowInterface interface{}) error) error {
 	bucket := ns.NestedReadBucket(addrBucketName)
 	c := bucket.ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Skip buckets.
 		if v == nil {
@@ -1235,6 +1237,7 @@ func deletePrivateKeys(ns walletdb.ReadWriteBucket, dbVersion uint32) error {
 	// Fetch all BIP0044 accounts.
 	bucket = ns.NestedReadWriteBucket(acctBucketName)
 	c := bucket.ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Skip buckets.
 		if v == nil {
@@ -1279,6 +1282,7 @@ func deletePrivateKeys(ns walletdb.ReadWriteBucket, dbVersion uint32) error {
 	// Fetch all imported addresses.
 	bucket = ns.NestedReadWriteBucket(addrBucketName)
 	c = bucket.ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Skip buckets.
 		if v == nil {

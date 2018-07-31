@@ -249,6 +249,11 @@ func (c *cursor) Seek(seek []byte) (key, value []byte) {
 	return (*bolt.Cursor)(c).Seek(seek)
 }
 
+// Closes the cursor
+//
+// This function is part of the walletdb.Cursor interface implementation.
+func (c *cursor) Close() {}
+
 // db represents a collection of namespaces which are persisted and implements
 // the walletdb.Db interface.  All database access is performed through
 // transactions which are obtained through the specific Namespace.

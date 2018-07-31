@@ -1954,6 +1954,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]*Credit, error) {
 	var op wire.OutPoint
 	var block Block
 	c := ns.NestedReadBucket(bucketUnspent).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		err := readCanonicalOutPoint(k, &op)
 		if err != nil {
@@ -1979,6 +1980,7 @@ func (s *Store) UnspentOutputs(ns walletdb.ReadBucket) ([]*Credit, error) {
 	}
 
 	c = ns.NestedReadBucket(bucketUnminedCredits).ReadCursor()
+	defer c.Close()
 	for k, _ := c.First(); k != nil; k, _ = c.Next() {
 		if existsRawUnminedInput(ns, k) != nil {
 			// Output is spent by an unmined transaction.
@@ -2010,6 +2012,7 @@ func (s *Store) UnspentOutpoints(ns walletdb.ReadBucket) ([]wire.OutPoint, error
 	var unspent []wire.OutPoint
 
 	c := ns.NestedReadBucket(bucketUnspent).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		var op wire.OutPoint
 		err := readCanonicalOutPoint(k, &op)
@@ -2040,6 +2043,7 @@ func (s *Store) UnspentOutpoints(ns walletdb.ReadBucket) ([]wire.OutPoint, error
 	}
 
 	c = ns.NestedReadBucket(bucketUnminedCredits).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		if existsRawUnminedInput(ns, k) != nil {
 			// Output is spent by an unmined transaction.
@@ -2076,6 +2080,7 @@ func (s *Store) UnspentTickets(dbtx walletdb.ReadTx, syncHeight int32, includeIm
 	tipBlock, _ := s.MainChainTip(ns)
 	var tickets []chainhash.Hash
 	c := ns.NestedReadBucket(bucketTickets).ReadCursor()
+	defer c.Close()
 	var hash chainhash.Hash
 	for ticketHash, _ := c.First(); ticketHash != nil; ticketHash, _ = c.Next() {
 		copy(hash[:], ticketHash)
@@ -2292,6 +2297,7 @@ func (s *Store) UnspentMultisigCreditsForAddress(ns walletdb.ReadBucket, addr dc
 
 	var mscs []*MultisigCredit
 	c := ns.NestedReadBucket(bucketMultisigUsp).ReadCursor()
+	defer c.Close()
 	for k, _ := c.First(); k != nil; k, _ = c.Next() {
 		val := existsMultisigOutCopy(ns, k)
 		if val == nil {
@@ -2464,6 +2470,7 @@ func (s *Store) UnspentOutputsForAmount(ns, addrmgrNs walletdb.ReadBucket, neede
 	found := dcrutil.Amount(0)
 
 	c := ns.NestedReadBucket(bucketUnspent).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		if found >= needed {
 			break
@@ -2575,6 +2582,7 @@ func (s *Store) UnspentOutputsForAmount(ns, addrmgrNs walletdb.ReadBucket, neede
 	// Unconfirmed transaction output handling.
 	if minConf == 0 {
 		c = ns.NestedReadBucket(bucketUnminedCredits).ReadCursor()
+		defer c.Close()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
 			if found >= needed {
 				break
@@ -2709,7 +2717,14 @@ func (s *Store) MakeInputSource(ns, addrmgrNs walletdb.ReadBucket, account uint3
 	// or cursor.Next depending on whether the cursor has already been
 	// created or not.
 	var bucketUnspentCursor, bucketUnminedCreditsCursor walletdb.ReadCursor
-
+	defer func(){
+		if bucketUnspentCursor != nil{
+			bucketUnspentCursor.Close()
+		}
+		if bucketUnminedCreditsCursor != nil{
+			bucketUnminedCreditsCursor.Close()
+		}
+	}()
 	// Current inputs and their total value.  These are closed over by the
 	// returned input source and reused across multiple calls.
 	var (
@@ -2992,6 +3007,7 @@ func (s *Store) MakeInputSource(ns, addrmgrNs walletdb.ReadBucket, account uint3
 func (s *Store) balanceFullScan(ns, addrmgrNs walletdb.ReadBucket, minConf int32, syncHeight int32) (map[uint32]*Balances, error) {
 	accountBalances := make(map[uint32]*Balances)
 	c := ns.NestedReadBucket(bucketUnspent).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		if existsRawUnminedInput(ns, k) != nil {
 			// Output is spent by an unmined transaction.
@@ -3155,6 +3171,7 @@ func (s *Store) balanceFullScan(ns, addrmgrNs walletdb.ReadBucket, minConf int32
 
 	// Unconfirmed transaction output handling.
 	c = ns.NestedReadBucket(bucketUnminedCredits).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Make sure this output was not spent by an unmined transaction.
 		// If it was, skip this credit.
@@ -3349,6 +3366,7 @@ func (s *Store) GetTxScript(ns walletdb.ReadBucket, hash []byte) ([]byte, error)
 func (s *Store) StoredTxScripts(ns walletdb.ReadBucket) [][]byte {
 	var scripts [][]byte
 	c := ns.NestedReadBucket(bucketScripts).ReadCursor()
+	defer c.Close()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		s := make([]byte, len(v))
 		copy(s, v)

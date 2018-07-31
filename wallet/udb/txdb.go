@@ -1900,7 +1900,9 @@ func existsMultisigOutUS(ns walletdb.ReadBucket, k []byte) bool {
 // namespace.
 func createStore(ns walletdb.ReadWriteBucket, chainParams *chaincfg.Params) error {
 	// Ensure that nothing currently exists in the namespace bucket.
-	ck, cv := ns.ReadCursor().First()
+	c := ns.ReadCursor()
+	defer c.Close()
+	ck, cv := c.First()
 	if ck != nil || cv != nil {
 		return errors.E(errors.IO, "bucket is not empty")
 	}

@@ -104,29 +104,16 @@ func (b *Bucket) SetTx(tx *badger.Txn) {
 }
 
 func (b *Bucket) Iterator() *badger.Iterator {
-	//Return an iterator if already created
-	if b.dbTransaction.iterator != nil {
-		//fmt.Printf("Iterator %s Taken\n", b.key)
-		return b.dbTransaction.iterator
-	}
-	//fmt.Printf("Iterator %s Created\n", b.key)
 	//Create a new Iterator
 	opts := badger.DefaultIteratorOptions
-	opts.PrefetchSize = 5
+	opts.PrefetchSize = 20
 	it := b.txn.NewIterator(opts)
-	b.dbTransaction.iterator = it
+	b.dbTransaction.iterators = append(b.dbTransaction.iterators, it)
 	return it
 }
 
 func (b *Bucket) BadgerCursor() *Cursor {
-	if b.cursor != nil {
-		//fmt.Printf("Cursor %s Taken\n", b.key)
-		return b.cursor
-	}
-
 	cursor := &Cursor{iterator: b.Iterator(), txn: b.txn, key: b.key}
-	b.cursor = cursor
-	//fmt.Printf("Cursor %s Created\n", b.key)
 	return cursor
 }
 
@@ -164,7 +151,6 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 		if errorIfExists {
 			return nil, errors.E(errors.Exist, "Bucket already exists")
 		} else {
-			//fmt.Println("Retreiving Bucket", string(k))
 			bucket, err := newBucket(b.txn, k, b.dbTransaction)
 			if err != nil {
 				fmt.Println("Bucket not retrieve:", err)
@@ -176,38 +162,10 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 	} else {
 		return nil, errors.E(errors.Invalid, "Key is not associated with a bucket")
 	}
-	//it := b.Iterator()
-	//defer it.Close()
-	//it.Seek(k)
-	// if it.Valid() {
-	// 	// Return an error if there is an existing key.
-	// 	if bytes.Equal(k, it.Item().Key()) {
-	// 		fmt.Println("Bucket already exists:", string(it.Item().Key()))
-	// 		//Key Already Exists
-	// 		item := it.Item()
-	// 		//If Item is a bucket
-	// 		if item.UserMeta() == MetaBucket {
-	// 			if errorIfExists {
-	// 				return nil, errors.E(errors.Exist, "Bucket already exists")
-	// 			}
-	// 		} else {
-	// 			return nil, errors.E(errors.Invalid, "Key is not associated with a bucket")
-	// 		}
-	// 	}
-	// }
-	// fmt.Println("Creating New Bucket")
-	// bucket, err := newBucket(b.txn, k)
-	// if err != nil {
-	// 	fmt.Println("Bucket not created:", err)
-	// 	return nil, err
-	// }
-	// fmt.Println("Bucket:", string(k), "created")
-	//b.buckets = append(b.buckets, bucket)
-	// return bucket, nil
 }
 
 func Dump(b *Bucket, key []byte) {
-	it := b.txn.NewIterator(badger.DefaultIteratorOptions)
+	it := b.Iterator()
 	defer it.Close()
 	for it.Seek(key); it.ValidForPrefix(key); it.Next() {
 		item := it.Item()
@@ -239,7 +197,6 @@ func (b *Bucket) RetrieveBucket(key []byte) *Bucket {
 	}
 	item, err := b.txn.Get(keyPrefix)
 	if err != nil {
-		fmt.Println("RetrieveBucket not found: ", err, " ", string(keyPrefix))
 		//Bucket Not Found
 		return nil
 	}
@@ -261,14 +218,13 @@ func (b *Bucket) RetrieveBucket(key []byte) *Bucket {
 }
 
 func (b *Bucket) DropBucket(key []byte) error {
-	fmt.Println("Drop Bucket:", string(key))
 	prefix, err := addPrefix(b.key, key)
 	if err != nil {
 		return err
 	}
 	it := b.Iterator()
+	defer it.Close()
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-		fmt.Println("Deleting bucket: ", string(it.Item().Key()), "Prefix: ", string(prefix))
 		b.txn.Delete(it.Item().Key())
 	}
 	return nil
@@ -276,7 +232,6 @@ func (b *Bucket) DropBucket(key []byte) error {
 
 func (b *Bucket) Get(key []byte) []byte {
 	if len(key) == 0 {
-		fmt.Println("Get Key is empty")
 		//TODO: handle empty key
 		return nil
 	}
@@ -288,38 +243,16 @@ func (b *Bucket) Get(key []byte) []byte {
 
 	item, err := b.txn.Get(k)
 	if err != nil {
-		//fmt.Println("Get Key not found: ", err, " ", string(k))
 		//Not found
 		return nil
 	}
-	// fmt.Println("Get Key len:",len(item.Key()), "Key: ",item.Key())
-	// fmt.Println("Key: ", string(item.Key()), "Prefix: ", string(item.Key()[:MaxPrefixSize]))
 	val, err := item.Value()
 	if err != nil {
 		fmt.Println("Get Failed: ", err)
 		//TODO: Handle error here
 		return nil
 	}
-	//fmt.Println("Get Key: ", b.dbTransaction.uuid, " ", string(k))
-	// fmt.Println("Prefix: ", string(b.key),"Val:", val)
-	// fmt.Println("Return Val:", )
-
-	//First byte is prefix length
 	return val[1:]
-	// it := b.Iterator()
-	// defer it.Close()
-	// it.Seek(k)
-
-	// // If our target node isn't the same key as what's passed in then return nil.
-	// if !bytes.Equal(k, it.Item().Key()) {
-	// 	return nil
-	// }
-	// val, err := it.Item().Value()
-	// if err != nil {
-	// 	//TODO: Handle error here
-	// 	return nil
-	// }
-	// return val
 }
 
 func (b *Bucket) Put(key []byte, value []byte) error {
@@ -364,39 +297,28 @@ func (b *Bucket) ForEach(fn func(k, v []byte) error) error {
 	it := b.Iterator()
 	defer it.Close()
 	prefix := b.key
+	it.Rewind()
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 		item := it.Item()
-		//Return only key for nested buckets found in bucket
-		if item.UserMeta() == MetaBucket {
-			v, err := item.Value()
-			if err != nil {
-				return err
-			}
-			prefixLength := int(v[0])
-			itemPrefix := item.Key()[:prefixLength]
-			// Check if we have the right item and not the bucket we're iterating through.
-			// Also check if the item prefix matches the prefix specified
-			if !bytes.Equal(item.Key(), prefix) && bytes.Equal(itemPrefix, prefix) {
-				if err := fn(item.Key()[prefixLength:], nil); err != nil {
-					fmt.Println("Loop returning error")
+		k := item.Key()
+		if bytes.Equal(item.Key(), prefix) {
+			continue
+		}
+		v, err := item.Value()
+		if err != nil {
+			fmt.Println("Loop returning error")
+			return err
+		}
+		prefixLength := int(v[0])
+		if prefixLength == len(prefix) {
+			if item.UserMeta() == MetaBucket {
+				if err := fn(k[prefixLength:], nil); err != nil {
 					return err
 				}
 			} else {
-				fmt.Println("Not a match. Key: ", string(item.Key()), "Item Prefix:", string(itemPrefix))
-			}
-			continue
-		}
-
-		k := item.Key()
-		v, err := item.Value()
-		if err != nil {
-			return err
-		}
-
-		prefixLength := int(v[0])
-		if prefixLength == len(prefix) {
-			if err := fn(k[prefixLength:], v[1:]); err != nil {
-				return err
+				if err := fn(k[prefixLength:], v[1:]); err != nil {
+					return err
+				}
 			}
 		}
 	}

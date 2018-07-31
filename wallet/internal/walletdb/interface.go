@@ -144,6 +144,9 @@ type ReadCursor interface {
 	// not exist, the cursor is moved to the next key after seek.  Returns
 	// the new pair.
 	Seek(seek []byte) (key, value []byte)
+
+	// Closes the cursor
+	Close()
 }
 
 // ReadWriteCursor represents a bucket cursor that can be positioned at the
@@ -162,7 +165,9 @@ type ReadWriteCursor interface {
 // BucketIsEmpty returns whether the bucket is empty, that is, whether there are
 // no key/value pairs or nested buckets.
 func BucketIsEmpty(bucket ReadBucket) bool {
-	k, v := bucket.ReadCursor().First()
+	cursor := bucket.ReadCursor()
+	defer cursor.Close()
+	k, v := cursor.First()
 	return k == nil && v == nil
 }
 
