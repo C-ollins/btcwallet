@@ -48,5 +48,6 @@
   version = "1.0.0"
   
 [[constraint]]
-  name = "github.com/c-ollins/badger"
+  name = "github.com/dgraph-io/badger"
+  source = "github.com/c-ollins/badger"
   branch = "master"
