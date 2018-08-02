@@ -362,7 +362,7 @@ func (c *cursor) Seek(seek []byte) (key, value []byte) {
 		return nil, nil
 	}
 	(*Cursor)(c).iterator.Seek(prefix)
-	if bytes.Equal(prefix, (*Cursor)(c).iterator.Item().Key()) {
+	if (*Cursor)(c).iterator.ValidForPrefix(c.key) {
 		item := (*Cursor)(c).iterator.Item()
 		val, err := item.Value()
 		if err != nil {
