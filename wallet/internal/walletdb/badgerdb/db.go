@@ -55,11 +55,21 @@ func (tx *transaction) ReadBucket(key []byte) walletdb.ReadBucket {
 
 func (tx *transaction) ReadWriteBucket(key []byte) walletdb.ReadWriteBucket {
 	//fmt.Println("ReadWriteBucket")
-	badgerBucket, err := newBucket(tx.badgerTx, key, tx)
+	item, err := tx.badgerTx.Get(key)
 	if err != nil {
-		//TODO: Handle Error
+		if err == badger.ErrKeyNotFound {
+			fmt.Println("ReadWriteBucket Not Found")
+			return nil
+		} else {
+			fmt.Println("ReadWriteBucket Unexpected Error:", err)
+			return nil
+		}
+	}
+	if item.UserMeta() != MetaBucket {
+		fmt.Println("ReadWriteBucket Key Not Associated With A Bucket")
 		return nil
 	}
+	badgerBucket := &Bucket{txn: tx.badgerTx, key: key, dbTransaction: tx}
 	tx.buckets = append(tx.buckets, badgerBucket)
 	return (*bucket)(badgerBucket)
 }
@@ -130,10 +140,25 @@ var _ walletdb.ReadWriteBucket = (*bucket)(nil)
 //
 // This function is part of the walletdb.ReadWriteBucket interface implementation.
 func (b *bucket) NestedReadWriteBucket(key []byte) walletdb.ReadWriteBucket {
-	badgerBucket := (*Bucket)(b).RetrieveBucket(key)
-	if badgerBucket == nil {
+	k, err := addPrefix(b.key, key)
+	if err != nil {
+		fmt.Println("NestedReadWriteBucket:", err)
+	}
+	item, err := b.txn.Get(k)
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return nil
+		} else {
+			fmt.Println("ReadWritNestedReadWriteBucketeBucket Unexpected Error:", err)
+			return nil
+		}
+	}
+	if item.UserMeta() != MetaBucket {
+		fmt.Println("NestedReadWriteBucket Not Associated With A Bucket")
 		return nil
 	}
+	badgerBucket := &Bucket{txn: b.txn, key: k, dbTransaction: b.dbTransaction}
+	b.dbTransaction.buckets = append(b.dbTransaction.buckets, badgerBucket)
 	return (*bucket)(badgerBucket)
 }
 
@@ -229,8 +254,9 @@ func (b *bucket) ReadCursor() walletdb.ReadCursor {
 //
 // This function is part of the walletdb.Bucket interface implementation.
 func (b *bucket) ReadWriteCursor() walletdb.ReadWriteCursor {
-	//fmt.Println("ReadWriteCursor")
-	return (*cursor)((*Bucket)(b).BadgerCursor())
+	c := (*Bucket)(b).BadgerCursor()
+	c.iterator.Rewind()
+	return (*cursor)(c)
 }
 
 // cursor represents a cursor over key/value pairs and nested buckets of a
@@ -247,10 +273,13 @@ type cursor Cursor
 //
 // This function is part of the walletdb.Cursor interface implementation.
 func (c *cursor) Delete() error {
-	fmt.Println("Cursor Delete")
 	if (*Cursor)(c).iterator.ValidForPrefix(c.key) {
 		item := (*Cursor)(c).iterator.Item()
-		return (*Cursor)(c).txn.Delete(item.Key())
+		if item.UserMeta() != MetaBucket {
+			return (*Cursor)(c).txn.Delete(item.Key())
+		} else {
+			return errors.E(errors.Invalid, "Invalid cannot delete a bucket")
+		}
 	}
 	return nil
 }
@@ -272,9 +301,10 @@ func (c *cursor) First() (key, value []byte) {
 		}
 		prefixLength := int(val[0])
 		if prefixLength == len(c.key) {
-			if item.UserMeta() != MetaBucket {
-				return item.Key()[prefixLength:], val[1:]
+			if item.UserMeta() == MetaBucket {
+				return item.Key()[prefixLength:], nil
 			}
+			return item.Key()[prefixLength:], val[1:]
 		}
 	}
 	//No item found
@@ -287,7 +317,8 @@ func (c *cursor) First() (key, value []byte) {
 func (c *cursor) Last() (key, value []byte) {
 	//fmt.Println("Last")
 	var lastValidItem *badger.Item
-	for (*Cursor)(c).iterator.Rewind(); (*Cursor)(c).iterator.ValidForPrefix(c.key); (*Cursor)(c).iterator.Next() {
+	(*Cursor)(c).iterator.Rewind()
+	for (*Cursor)(c).iterator.Seek(c.key); (*Cursor)(c).iterator.ValidForPrefix(c.key); (*Cursor)(c).iterator.Next() {
 		item := (*Cursor)(c).iterator.Item()
 		if bytes.Equal(c.key, item.Key()) {
 			continue
@@ -299,9 +330,7 @@ func (c *cursor) Last() (key, value []byte) {
 		}
 		prefixLength := int(val[0])
 		if prefixLength == len(c.key) {
-			if item.UserMeta() != MetaBucket {
-				return item.Key()[prefixLength:], val[1:]
-			}
+			lastValidItem = item
 		}
 	}
 	if lastValidItem != nil {
@@ -311,9 +340,11 @@ func (c *cursor) Last() (key, value []byte) {
 			return nil, nil
 		}
 		prefixLength := int(val[0])
+		if lastValidItem.UserMeta() == MetaBucket {
+			return lastValidItem.Key()[prefixLength:], nil
+		}
 		return lastValidItem.Key()[prefixLength:], val[1:]
 	}
-
 	return nil, nil
 }
 
@@ -333,9 +364,10 @@ func (c *cursor) Next() (key, value []byte) {
 		}
 		prefixLength := int(val[0])
 		if prefixLength == len(c.key) {
-			if item.UserMeta() != MetaBucket {
-				return item.Key()[prefixLength:], val[1:]
+			if item.UserMeta() == MetaBucket {
+				return item.Key()[prefixLength:], nil
 			}
+			return item.Key()[prefixLength:], val[1:]
 		}
 	}
 	return nil, nil
@@ -355,7 +387,6 @@ func (c *cursor) Prev() (key, value []byte) {
 //
 // This function is part of the walletdb.Cursor interface implementation.
 func (c *cursor) Seek(seek []byte) (key, value []byte) {
-	//fmt.Println("Seek")
 	prefix, err := addPrefix((*Cursor)(c).key, seek)
 	if err != nil {
 		fmt.Println("Seek err:", err)
@@ -371,6 +402,9 @@ func (c *cursor) Seek(seek []byte) (key, value []byte) {
 		}
 		prefixLength := int(val[0])
 		if prefixLength == len(c.key) {
+			if item.UserMeta() == MetaBucket {
+				return item.Key()[prefixLength:], nil
+			}
 			return item.Key()[prefixLength:], val[1:]
 		}
 	}
@@ -442,7 +476,6 @@ func openDB(dbPath string, create bool) (walletdb.DB, error) {
 	if !create && !fileExists(dbPath) {
 		return nil, errors.E(errors.NotExist, "missing database file")
 	}
-
 	opts := badger.DefaultOptions
 	opts.Dir = dbPath
 	opts.ValueDir = dbPath
@@ -455,8 +488,7 @@ func openDB(dbPath string, create bool) (walletdb.DB, error) {
 	badgerDb, err := badger.OpenManaged(opts)
 
 	go func() {
-		ticker = time.NewTicker(5 * time.Minute)
-
+		ticker = time.NewTicker(1 * time.Minute)
 		for range ticker.C {
 		again:
 			err := badgerDb.RunValueLogGC(0.7)

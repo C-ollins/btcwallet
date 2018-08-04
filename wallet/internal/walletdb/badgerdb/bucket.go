@@ -33,25 +33,27 @@ type Cursor struct {
 }
 
 func newBucket(tx *badger.Txn, badgerKey []byte, dbTx *transaction) (*Bucket, error) {
-	prefix, err := createPrefix(badgerKey)
-	if err != nil {
-		fmt.Println("Prefix error: ", prefix)
-		return nil, err
-	}
-	item, err := tx.Get(badgerKey)
+	copiedKey := make([]byte, len(badgerKey))
+	copy(copiedKey, badgerKey)
+	item, err := tx.Get(copiedKey)
 	if err != nil {
 		//Not Found
-		err = tx.SetWithMeta(badgerKey, insertPrefixLength([]byte{}, len(badgerKey)), MetaBucket)
-		if err != nil {
-			fmt.Println("Unable to set with meta:", err, "key:", string(badgerKey))
+		if err == badger.ErrKeyNotFound {
+			err = tx.SetWithMeta(copiedKey, insertPrefixLength([]byte{}, len(copiedKey)), MetaBucket)
+			if err != nil {
+				fmt.Println("Unable to set with meta:", err, "key:", string(copiedKey))
+				return nil, err
+			}
+			return &Bucket{txn: tx, key: copiedKey, dbTransaction: dbTx}, nil
+		} else {
+			fmt.Println("Unexpected error:", err)
 			return nil, err
 		}
-		return &Bucket{txn: tx, key: prefix, dbTransaction: dbTx}, nil
 	}
 	if item.UserMeta() != MetaBucket {
-		errors.E(errors.Invalid, "Key is not associated with a bucket: ", string(badgerKey))
+		errors.E(errors.Invalid, "Key is not associated with a bucket: ", string(copiedKey))
 	}
-	return &Bucket{txn: tx, key: prefix, dbTransaction: dbTx}, nil
+	return &Bucket{txn: tx, key: copiedKey, dbTransaction: dbTx}, nil
 }
 
 func trimByte(b []byte) []byte {
@@ -106,7 +108,7 @@ func (b *Bucket) SetTx(tx *badger.Txn) {
 func (b *Bucket) Iterator() *badger.Iterator {
 	//Create a new Iterator
 	opts := badger.DefaultIteratorOptions
-	opts.PrefetchSize = 20
+	opts.PrefetchSize = 100
 	it := b.txn.NewIterator(opts)
 	b.dbTransaction.iterators = append(b.dbTransaction.iterators, it)
 	return it
@@ -128,21 +130,18 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 		fmt.Println("Error from adding prefix: ", err)
 		return nil, err
 	}
-	//Convert len to MaxPrefixLen
-	k, err := createPrefix(keyPrefix)
-	if err != nil {
-		fmt.Println("Error from creating prefix: ", err)
-		return nil, err
-	}
-	item, err := b.txn.Get(k)
+	copiedKey := make([]byte, len(keyPrefix))
+	copy(copiedKey, keyPrefix)
+	item, err := b.txn.Get(copiedKey)
 	if err != nil {
 		//Key Not Found
-		//fmt.Println("Creating New Bucket")
-		bucket, err := newBucket(b.txn, k, b.dbTransaction)
+		err = b.txn.SetWithMeta(copiedKey, insertPrefixLength([]byte{}, len(b.key)), MetaBucket)
 		if err != nil {
-			fmt.Println("Bucket not created:", err)
+			fmt.Println("Unable to set with meta:", err, "key:", string(copiedKey))
 			return nil, err
 		}
+		bucket := &Bucket{txn: b.txn, key: copiedKey, dbTransaction: b.dbTransaction}
+		b.buckets = append(b.buckets, bucket)
 		//fmt.Println("Bucket:", string(k), "created")
 		return bucket, nil
 	}
@@ -151,12 +150,9 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 		if errorIfExists {
 			return nil, errors.E(errors.Exist, "Bucket already exists")
 		} else {
-			bucket, err := newBucket(b.txn, k, b.dbTransaction)
-			if err != nil {
-				fmt.Println("Bucket not retrieve:", err)
-				return nil, err
-			}
-			//fmt.Println("Bucket:", string(k), "retrieved")
+			bucket := &Bucket{txn: b.txn, key: copiedKey, dbTransaction: b.dbTransaction}
+			b.buckets = append(b.buckets, bucket)
+			//fmt.Println("Bucket:", string(keyPrefix), "retrieved")
 			return bucket, nil
 		}
 	} else {
@@ -164,17 +160,18 @@ func (b *Bucket) Bucket(key []byte, errorIfExists bool) (*Bucket, error) {
 	}
 }
 
-func Dump(b *Bucket, key []byte) {
+func Dump(b *Bucket) {
 	it := b.Iterator()
 	defer it.Close()
-	for it.Seek(key); it.ValidForPrefix(key); it.Next() {
+	for it.Rewind(); it.Valid(); it.Next() {
 		item := it.Item()
 		k := item.Key()
-		val, _ := item.Value()
-		prefixLength := int(val[0])
-		if prefixLength == len(key) {
-			fmt.Printf("key=%s, meta=%v, Key bytes %v: %v\n", k, item.UserMeta(), key, item.Key())
-		}
+		//val, _ := item.Value()
+		//prefixLength := int(val[0])
+		fmt.Printf("key=%s, meta=%v, Key bytes %v\n", k, item.UserMeta(), k)
+		// if prefixLength == len(key) {
+		// 	fmt.Printf("key=%s, meta=%v, Key bytes %v: %v\n", k, item.UserMeta(), key, item.Key())
+		// }
 	}
 }
 
@@ -190,12 +187,9 @@ func (b *Bucket) RetrieveBucket(key []byte) *Bucket {
 		fmt.Println("Retrieve bucket prefix error: ", err)
 		return nil
 	}
-	keyPrefix, err := createPrefix(k)
-	if err != nil {
-		fmt.Println("Retrieve bucket prefix error: ", err)
-		return nil
-	}
-	item, err := b.txn.Get(keyPrefix)
+	copiedKey := make([]byte, len(k))
+	copy(copiedKey, k)
+	item, err := b.txn.Get(copiedKey)
 	if err != nil {
 		//Bucket Not Found
 		return nil
@@ -203,11 +197,7 @@ func (b *Bucket) RetrieveBucket(key []byte) *Bucket {
 
 	if item.UserMeta() == MetaBucket {
 		//Retrieve bucket
-		bucket, err := newBucket(b.txn, keyPrefix, b.dbTransaction)
-		if err != nil {
-			fmt.Println("Failed to create new bucket")
-			return nil
-		}
+		bucket := &Bucket{txn: b.txn, key: copiedKey, dbTransaction: b.dbTransaction}
 		b.buckets = append(b.buckets, bucket)
 		return bucket
 	} else {
@@ -240,9 +230,9 @@ func (b *Bucket) Get(key []byte) []byte {
 		fmt.Println("Get Failed to add prefix: ", err)
 		//TODO: Handle error
 	}
-
 	item, err := b.txn.Get(k)
 	if err != nil {
+		//fmt.Println("Key not found")
 		//Not found
 		return nil
 	}
@@ -263,20 +253,22 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 	} else if len(key) > MaxKeySize {
 		fmt.Println("Put Key is large")
 		//Key too large
-		return errors.E(errors.Invalid, "Key is empty")
+		return errors.E(errors.Invalid, "Key is too large")
 	}
-	k, err := addPrefix(b.key, key)
+	copiedKey := make([]byte, len(key))
+	copy(copiedKey, key[:])
+
+	k, err := addPrefix(b.key, copiedKey)
 	if err != nil {
 		fmt.Println("Put Key Failed to add prefix: ", err)
 		return err
 	}
-
 	err = b.txn.Set(k, insertPrefixLength(value, len(b.key)))
 	if err != nil {
 		fmt.Println("Put Key Failed to put: ", err)
 		return err
 	}
-	return err
+	return nil
 }
 
 func (b *Bucket) Delete(key []byte) error {
