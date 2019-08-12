@@ -413,8 +413,10 @@ func spvLoop(ctx context.Context, w *wallet.Wallet, loader *ldr.Loader) {
 	amgrDir := filepath.Join(cfg.AppDataDir.Value, w.ChainParams().Name)
 	amgr := addrmgr.New(amgrDir, net.LookupIP) // TODO: be mindful of tor
 	lp := p2p.NewLocalPeer(w.ChainParams(), addr, amgr)
-	wallets := make([]*wallet.Wallet, 1)
-	wallets[0] = w
+
+	wallets := make(map[string]*wallet.Wallet)
+	wallets["default"] = w
+
 	syncer := spv.NewSyncer(wallets, lp)
 	if len(cfg.SPVConnect) > 0 {
 		syncer.SetPersistantPeers(cfg.SPVConnect)

@@ -2766,8 +2766,10 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			_ = svr.Send(resp)
 		},
 	}
-	wallets := make([]*wallet.Wallet, 1)
-	wallets[0] = w
+
+	wallets := make(map[string]*wallet.Wallet)
+	wallets["default"] = w
+
 	syncer := spv.NewSyncer(wallets, lp)
 	syncer.SetNotifications(ntfns)
 	if len(req.SpvConnect) > 0 {

@@ -638,12 +638,11 @@ func (w *Wallet) processTransactionRecord(dbtx walletdb.ReadWriteTx, rec *udb.Tx
 			}
 			addrs = []dcrutil.Address{addr}
 			watchOutPoint = false
-		} else if (output.Value == 0) {
+		} else if output.Value == 0 {
 			// The only case of outputs with 0 value that we need to handle are
 			// ticket commitments. All other outputs can be ignored.
 			continue
 		}
-
 
 		var tree int8
 		if isStakeType {

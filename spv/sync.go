@@ -39,7 +39,7 @@ type Syncer struct {
 	atomicWalletSynced   uint32 // CAS (synced=1) when wallet syncing complete
 
 	chainParams *chaincfg.Params
-	wallets     []*wallet.Wallet
+	wallets     map[string]*wallet.Wallet
 	lp          *p2p.LocalPeer
 
 	// Protected by atomicCatchUpTryLock
@@ -111,9 +111,9 @@ type Notifications struct {
 }
 
 // NewSyncer creates a Syncer that will sync the wallet using SPV.
-func NewSyncer(wallets []*wallet.Wallet, lp *p2p.LocalPeer) *Syncer {
+func NewSyncer(wallets map[string]*wallet.Wallet, lp *p2p.LocalPeer) *Syncer {
 	return &Syncer{
-		chainParams:       wallets[0].ChainParams(),
+		chainParams:       wallets["default"].ChainParams(),
 		wallets:           wallets,
 		discoverAccounts:  false, // check this
 		connectingRemotes: make(map[string]struct{}),
@@ -1214,7 +1214,7 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 				continue
 			}
 			s.fetchHeadersProgress(headers[len(headers)-1])
-			log.Debugf("[%s] Fetched %d new header(s) ending at height %d from %v",
+			log.Debugf("[%v] Fetched %d new header(s) ending at height %d from %v",
 				key, added, nodes[len(nodes)-1].Header.Height, rp)
 
 			bestChain, err := w.EvaluateBestChain(&s.sidechains)
@@ -1248,9 +1248,9 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 			}
 			tip := bestChain[len(bestChain)-1]
 			if len(bestChain) == 1 {
-				log.Infof("[%] Connected block %v, height %d", key, tip.Hash, tip.Header.Height)
+				log.Infof("[%s] Connected block %v, height %d", key, tip.Hash, tip.Header.Height)
 			} else {
-				log.Infof("[%] Connected %d blocks, new tip %v, height %d, date %v",
+				log.Infof("[%s] Connected %d blocks, new tip %v, height %d, date %v",
 					key, len(bestChain), tip.Hash, tip.Header.Height, tip.Header.Timestamp)
 			}
 
