@@ -5,7 +5,6 @@
 package spv
 
 import (
-	"github.com/decred/dcrd/chaincfg"
 	"context"
 	"net"
 	"runtime"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/decred/dcrd/addrmgr"
+	"github.com/decred/dcrd/chaincfg"
 	"github.com/decred/dcrd/chaincfg/chainhash"
 	"github.com/decred/dcrd/gcs/blockcf"
 	"github.com/decred/dcrd/wire"
@@ -1196,114 +1196,76 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 			if added == 0 {
 				s.sidechainMu.Unlock()
 
-				nodes := make([]*wallet.BlockNode, len(headers))
-				g, ctx := errgroup.WithContext(ctx)
-				for i := range headers {
-					i := i
-
-					g.Go(func() error {
-						header := headers[i]
-						hash := header.BlockHash()
-						filter, err := rp.GetCFilter(ctx, &hash)
-						if err != nil {
-							return err
-						}
-						nodes[i] = wallet.NewBlockNode(header, &hash, filter)
-						return nil
-					})
-				}
-
-				err = g.Wait()
-				if err != nil {
-					return err
-				}
-
-				var added int
-				s.sidechainMu.Lock()
-				for _, n := range nodes {
-					haveBlock, _, _ := w.BlockInMainChain(n.Hash)
-					if haveBlock {
-						continue
-					}
-					if s.sidechains.AddBlockNode(n) {
-						added++
-					}
-				}
-
-				if added == 0 {
-					s.sidechainMu.Unlock()
-
-					s.locatorMu.Lock()
-					if s.locatorGeneration > generation {
-						locators = s.currentLocators
-					}
-					if len(locators) == 0 {
-						locators, err = w.BlockLocators(nil)
-						if err != nil {
-							s.locatorMu.Unlock()
-							return err
-						}
-						s.currentLocators = locators
-						s.locatorGeneration++
-						generation = s.locatorGeneration
-					}
-					s.locatorMu.Unlock()
-					continue
-				}
-				s.fetchHeadersProgress(headers[len(headers)-1])
-				log.Debugf("[%s] Fetched %d new header(s) ending at height %d from %v", key,
-					added, nodes[len(nodes)-1].Header.Height, rp)
-
-				bestChain, err := w.EvaluateBestChain(&s.sidechains)
-				if err != nil {
-					s.sidechainMu.Unlock()
-					return err
-				}
-				if len(bestChain) == 0 {
-					s.sidechainMu.Unlock()
-					continue
-				}
-
-				_, err = w.ValidateHeaderChainDifficulties(bestChain, 0)
-				if err != nil {
-					s.sidechainMu.Unlock()
-					return err
-				}
-
-				prevChain, err := w.ChainSwitch(&s.sidechains, bestChain, nil)
-				if err != nil {
-					s.sidechainMu.Unlock()
-					return err
-				}
-
-				if len(prevChain) != 0 {
-					log.Infof("[%s] Reorganize from %v to %v (total %d block(s) reorged)", key,
-						prevChain[len(prevChain)-1].Hash, bestChain[len(bestChain)-1].Hash, len(prevChain))
-					for _, n := range prevChain {
-						s.sidechains.AddBlockNode(n)
-					}
-				}
-				tip := bestChain[len(bestChain)-1]
-				if len(bestChain) == 1 {
-					log.Infof("[%s] Connected block %v, height %d", key, tip.Hash, tip.Header.Height)
-				} else {
-					log.Infof("[%s] Connected %d blocks, new tip %v, height %d, date %v", key,
-						len(bestChain), tip.Hash, tip.Header.Height, tip.Header.Timestamp)
-				}
-
-				s.sidechainMu.Unlock()
-
-				// Generate new locators
 				s.locatorMu.Lock()
-				locators, err = w.BlockLocators(nil)
-				if err != nil {
-					s.locatorMu.Unlock()
-					return err
+				if s.locatorGeneration > generation {
+					locators = s.currentLocators
 				}
-				s.currentLocators = locators
-				s.locatorGeneration++
+				if len(locators) == 0 {
+					locators, err = w.BlockLocators(nil)
+					if err != nil {
+						s.locatorMu.Unlock()
+						return err
+					}
+					s.currentLocators = locators
+					s.locatorGeneration++
+					generation = s.locatorGeneration
+				}
 				s.locatorMu.Unlock()
+				continue
 			}
+			s.fetchHeadersProgress(headers[len(headers)-1])
+			log.Debugf("[%s] Fetched %d new header(s) ending at height %d from %v",
+				key, added, nodes[len(nodes)-1].Header.Height, rp)
+
+			bestChain, err := w.EvaluateBestChain(&s.sidechains)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+			if len(bestChain) == 0 {
+				s.sidechainMu.Unlock()
+				continue
+			}
+
+			_, err = w.ValidateHeaderChainDifficulties(bestChain, 0)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+
+			prevChain, err := w.ChainSwitch(&s.sidechains, bestChain, nil)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+
+			if len(prevChain) != 0 {
+				log.Infof("[%s] Reorganize from %v to %v (total %d block(s) reorged)",
+					key, prevChain[len(prevChain)-1].Hash, bestChain[len(bestChain)-1].Hash, len(prevChain))
+				for _, n := range prevChain {
+					s.sidechains.AddBlockNode(n)
+				}
+			}
+			tip := bestChain[len(bestChain)-1]
+			if len(bestChain) == 1 {
+				log.Infof("[%] Connected block %v, height %d", key, tip.Hash, tip.Header.Height)
+			} else {
+				log.Infof("[%] Connected %d blocks, new tip %v, height %d, date %v",
+					key, len(bestChain), tip.Hash, tip.Header.Height, tip.Header.Timestamp)
+			}
+
+			s.sidechainMu.Unlock()
+
+			// Generate new locators
+			s.locatorMu.Lock()
+			locators, err = w.BlockLocators(nil)
+			if err != nil {
+				s.locatorMu.Unlock()
+				return err
+			}
+			s.currentLocators = locators
+			s.locatorGeneration++
+			s.locatorMu.Unlock()
 		}
 	}
 	return nil
