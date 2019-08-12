@@ -240,7 +240,7 @@ func (w *Wallet) rescan(ctx context.Context, n NetworkBackend,
 			}
 		}
 		log.Infof("Rescanning block range [%v, %v]...", height, through)
-		err = n.Rescan(ctx, rescanBlocks, w)
+		err = n.Rescan(ctx, rescanBlocks, w, w)
 		if err != nil {
 			return err
 		}

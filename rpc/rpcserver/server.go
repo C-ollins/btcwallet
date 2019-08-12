@@ -2625,7 +2625,7 @@ func (s *loaderServer) RpcSync(req *pb.RpcSyncRequest, svr pb.WalletLoaderServic
 }
 
 func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderService_SpvSyncServer) error {
-	wallet, ok := s.loader.LoadedWallet()
+	w, ok := s.loader.LoadedWallet()
 	if !ok {
 		return status.Errorf(codes.FailedPrecondition, "Wallet has not been loaded")
 	}
@@ -2641,14 +2641,14 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			zero.Bytes(req.PrivatePassphrase)
 		}
 		defer lockWallet()
-		err := wallet.Unlock(req.PrivatePassphrase, lock)
+		err := w.Unlock(req.PrivatePassphrase, lock)
 		if err != nil {
 			return translateError(err)
 		}
 	}
 	addr := &net.TCPAddr{IP: net.ParseIP("::1"), Port: 0}
 	amgr := addrmgr.New(s.loader.DbDirPath(), net.LookupIP) // TODO: be mindful of tor
-	lp := p2p.NewLocalPeer(wallet.ChainParams(), addr, amgr)
+	lp := p2p.NewLocalPeer(w.ChainParams(), addr, amgr)
 
 	ntfns := &spv.Notifications{
 		Synced: func(sync bool) {
@@ -2766,7 +2766,9 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			_ = svr.Send(resp)
 		},
 	}
-	syncer := spv.NewSyncer(wallet, lp)
+	wallets := make([]*wallet.Wallet, 1)
+	wallets[0] = w
+	syncer := spv.NewSyncer(wallets, lp)
 	syncer.SetNotifications(ntfns)
 	if len(req.SpvConnect) > 0 {
 		spvConnects := make([]string, len(req.SpvConnect))
@@ -2780,10 +2782,10 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 		syncer.SetPersistantPeers(spvConnects)
 	}
 
-	wallet.SetNetworkBackend(syncer)
+	w.SetNetworkBackend(syncer)
 	s.loader.SetNetworkBackend(syncer)
 
-	defer wallet.SetNetworkBackend(nil)
+	defer w.SetNetworkBackend(nil)
 	defer s.loader.SetNetworkBackend(nil)
 
 	err := syncer.Run(svr.Context())

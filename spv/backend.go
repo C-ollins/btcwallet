@@ -140,12 +140,12 @@ func (s *Syncer) PublishTransactions(ctx context.Context, txs ...*wire.MsgTx) er
 }
 
 // Rescan implements the Rescan method of the wallet.NetworkBackend interface.
-func (s *Syncer) Rescan(ctx context.Context, blockHashes []chainhash.Hash, r wallet.RescanSaver) error {
+func (s *Syncer) Rescan(ctx context.Context, blockHashes []chainhash.Hash, w *wallet.Wallet, r wallet.RescanSaver) error {
 	const op errors.Op = "spv.Rescan"
 
 	cfilters := make([]*gcs.Filter, 0, len(blockHashes))
 	for i := 0; i < len(blockHashes); i++ {
-		f, err := s.wallet.CFilter(&blockHashes[i])
+		f, err := w.CFilter(&blockHashes[i])
 		if err != nil {
 			return err
 		}

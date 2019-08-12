@@ -13,6 +13,7 @@ require (
 	github.com/decred/dcrd/dcrec v1.0.0
 	github.com/decred/dcrd/dcrjson/v2 v2.0.0
 	github.com/decred/dcrd/dcrutil v1.2.0
+	github.com/decred/dcrd/dcrutil/v2 v2.0.0 // indirect
 	github.com/decred/dcrd/hdkeychain/v2 v2.0.0
 	github.com/decred/dcrd/rpcclient/v2 v2.0.0
 	github.com/decred/dcrd/txscript v1.0.2
@@ -33,7 +34,7 @@ require (
 	github.com/gorilla/websocket v1.4.0
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/jrick/logrotate v1.0.0
-	golang.org/x/crypto v0.0.0-20190320223903-b7391e95e576
+	golang.org/x/crypto v0.0.0-20190611184440-5c40567a22f8
 	google.golang.org/grpc v1.18.0
 )
 

@@ -145,7 +145,7 @@ func (b *rpcBackend) PublishTransactions(ctx context.Context, txs ...*wire.MsgTx
 	return nil
 }
 
-func (b *rpcBackend) Rescan(ctx context.Context, blocks []chainhash.Hash, r wallet.RescanSaver) error {
+func (b *rpcBackend) Rescan(ctx context.Context, blocks []chainhash.Hash, w *wallet.Wallet, r wallet.RescanSaver) error {
 	const op errors.Op = "dcrd.jsonrpc.rescan"
 
 	res, err := b.rpcClient.Rescan(blocks)
