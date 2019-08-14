@@ -1102,7 +1102,7 @@ func (s *Syncer) handleBlockAnnouncements(ctx context.Context, rp *p2p.RemotePee
 			if haveBlock {
 				continue
 			}
-			log.Infof("Received sidechain or orphan block %v, height %v", n.Hash, n.Header.Height)
+			log.Infof("[%s] Received sidechain or orphan block %v, height %v", key, n.Hash, n.Header.Height)
 		}
 	}
 
@@ -1310,12 +1310,14 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 
 		// Fetch any unseen headers from the peer.
 		s.fetchHeadersStart()
+		log.Infof("[%s] About to fetch headers", key)
 		log.Debugf("[%s] Fetching headers from %v", key, rp.RemoteAddr())
 		err := s.getHeaders(ctx, rp)
 		if err != nil {
 			return err
 		}
 		s.fetchHeadersFinished()
+		log.Infof("[%s] Finished", key)
 
 		if atomic.CompareAndSwapUint32(&s.atomicCatchUpTryLock, 0, 1) {
 			err = func() error {
@@ -1340,6 +1342,7 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 				// check to see if it was previously synced
 				s.unsynced()
 
+				log.Infof("[%s] About to discover active address", key)
 				s.discoverAddressesStart()
 				err = w.DiscoverActiveAddresses(ctx, rp, rescanPoint, s.discoverAccounts)
 				if err != nil {
@@ -1347,6 +1350,7 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 				}
 				s.discoverAddressesFinished()
 				s.discoverAccounts = false
+				log.Infof("[%s] Finished adderess discovery", key)
 
 				err = w.LoadActiveDataFilters(ctx, s, true)
 				if err != nil {
@@ -1354,6 +1358,7 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 				}
 				s.loadedFilters = true
 
+				log.Infof("[%s] About to start blocks rescan", key)
 				s.rescanStart()
 
 				rescanBlock, err := w.BlockHeader(rescanPoint)
@@ -1370,8 +1375,10 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 					s.rescanProgress(p.ScannedThrough)
 				}
 				s.rescanFinished()
+				log.Infof("[%s] Finished", key)
 
 				s.synced()
+				log.Infof("[%s] Synced", key)
 
 				return nil
 			}()
