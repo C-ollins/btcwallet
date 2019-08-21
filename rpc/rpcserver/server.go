@@ -2651,7 +2651,7 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 	lp := p2p.NewLocalPeer(w.ChainParams(), addr, amgr)
 
 	ntfns := &spv.Notifications{
-		Synced: func(sync bool) {
+		Synced: func(walletAlias string, sync bool) {
 			resp := &pb.SpvSyncResponse{}
 			resp.Synced = sync
 			if sync {
@@ -2681,13 +2681,13 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			}
 			_ = svr.Send(resp)
 		},
-		FetchMissingCFiltersStarted: func() {
+		FetchMissingCFiltersStarted: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_MISSING_CFILTERS_STARTED,
 			}
 			_ = svr.Send(resp)
 		},
-		FetchMissingCFiltersProgress: func(missingCFitlersStart, missingCFitlersEnd int32) {
+		FetchMissingCFiltersProgress: func(walletAlias string, missingCFitlersStart, missingCFitlersEnd int32) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_MISSING_CFILTERS_PROGRESS,
 				FetchMissingCfilters: &pb.FetchMissingCFiltersNotification{
@@ -2697,19 +2697,19 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			}
 			_ = svr.Send(resp)
 		},
-		FetchMissingCFiltersFinished: func() {
+		FetchMissingCFiltersFinished: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_MISSING_CFILTERS_FINISHED,
 			}
 			_ = svr.Send(resp)
 		},
-		FetchHeadersStarted: func() {
+		FetchHeadersStarted: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_HEADERS_STARTED,
 			}
 			_ = svr.Send(resp)
 		},
-		FetchHeadersProgress: func(fetchedHeadersCount int32, lastHeaderTime int64) {
+		FetchHeadersProgress: func(walletAlias string, fetchedHeadersCount int32, lastHeaderTime int64) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_HEADERS_PROGRESS,
 				FetchHeaders: &pb.FetchHeadersNotification{
@@ -2719,19 +2719,19 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			}
 			_ = svr.Send(resp)
 		},
-		FetchHeadersFinished: func() {
+		FetchHeadersFinished: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_FETCHED_HEADERS_FINISHED,
 			}
 			_ = svr.Send(resp)
 		},
-		DiscoverAddressesStarted: func() {
+		DiscoverAddressesStarted: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_DISCOVER_ADDRESSES_STARTED,
 			}
 			_ = svr.Send(resp)
 		},
-		DiscoverAddressesFinished: func() {
+		DiscoverAddressesFinished: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_DISCOVER_ADDRESSES_FINISHED,
 			}
@@ -2744,13 +2744,13 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			}
 			_ = svr.Send(resp)
 		},
-		RescanStarted: func() {
+		RescanStarted: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_RESCAN_STARTED,
 			}
 			_ = svr.Send(resp)
 		},
-		RescanProgress: func(rescannedThrough int32) {
+		RescanProgress: func(walletAlias string, rescannedThrough int32) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_RESCAN_PROGRESS,
 				RescanProgress: &pb.RescanProgressNotification{
@@ -2759,7 +2759,7 @@ func (s *loaderServer) SpvSync(req *pb.SpvSyncRequest, svr pb.WalletLoaderServic
 			}
 			_ = svr.Send(resp)
 		},
-		RescanFinished: func() {
+		RescanFinished: func(walletAlias string) {
 			resp := &pb.SpvSyncResponse{
 				NotificationType: pb.SyncNotificationType_RESCAN_FINISHED,
 			}

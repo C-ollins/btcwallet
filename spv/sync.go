@@ -82,20 +82,20 @@ type Syncer struct {
 // Notifications struct to contain all of the upcoming callbacks that will
 // be used to update the rpc streams for syncing.
 type Notifications struct {
-	Synced                       func(sync bool)
+	Synced                       func(walletAlias string, sync bool)
 	PeerConnected                func(peerCount int32, addr string)
 	PeerDisconnected             func(peerCount int32, addr string)
-	FetchMissingCFiltersStarted  func()
-	FetchMissingCFiltersProgress func(startCFiltersHeight, endCFiltersHeight int32)
-	FetchMissingCFiltersFinished func()
-	FetchHeadersStarted          func()
-	FetchHeadersProgress         func(lastHeaderHeight int32, lastHeaderTime int64)
-	FetchHeadersFinished         func()
-	DiscoverAddressesStarted     func()
-	DiscoverAddressesFinished    func()
-	RescanStarted                func()
-	RescanProgress               func(rescannedThrough int32)
-	RescanFinished               func()
+	FetchMissingCFiltersStarted  func(walletAlias string)
+	FetchMissingCFiltersProgress func(walletAlias string, startCFiltersHeight, endCFiltersHeight int32)
+	FetchMissingCFiltersFinished func(walletAlias string)
+	FetchHeadersStarted          func(walletAlias string)
+	FetchHeadersProgress         func(walletAlias string, lastHeaderHeight int32, lastHeaderTime int64)
+	FetchHeadersFinished         func(walletAlias string)
+	DiscoverAddressesStarted     func(walletAlias string)
+	DiscoverAddressesFinished    func(walletAlias string)
+	RescanStarted                func(walletAlias string)
+	RescanProgress               func(walletAlias string, rescannedThrough int32)
+	RescanFinished               func(walletAlias string)
 
 	// MempoolTxs is called whenever new relevant unmined transactions are
 	// observed and saved.
@@ -151,7 +151,7 @@ func (s *Syncer) synced() {
 	if atomic.CompareAndSwapUint32(&s.atomicWalletSynced, 0, 1) &&
 		s.notifications != nil &&
 		s.notifications.Synced != nil {
-		s.notifications.Synced(true)
+		s.notifications.Synced(s.syncingWalletAlias, true)
 	}
 }
 
@@ -161,7 +161,7 @@ func (s *Syncer) unsynced() {
 	if atomic.CompareAndSwapUint32(&s.atomicWalletSynced, 1, 0) &&
 		s.notifications != nil &&
 		s.notifications.Synced != nil {
-		s.notifications.Synced(false)
+		s.notifications.Synced(s.syncingWalletAlias, false)
 	}
 }
 
@@ -181,66 +181,66 @@ func (s *Syncer) peerDisconnected(remotesCount int, addr string) {
 
 func (s *Syncer) fetchMissingCfiltersStart() {
 	if s.notifications != nil && s.notifications.FetchMissingCFiltersStarted != nil {
-		s.notifications.FetchMissingCFiltersStarted()
+		s.notifications.FetchMissingCFiltersStarted(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) fetchMissingCfiltersProgress(startMissingCFilterHeight, endMissinCFilterHeight int32) {
 	if s.notifications != nil && s.notifications.FetchMissingCFiltersProgress != nil {
-		s.notifications.FetchMissingCFiltersProgress(startMissingCFilterHeight, endMissinCFilterHeight)
+		s.notifications.FetchMissingCFiltersProgress(s.syncingWalletAlias, startMissingCFilterHeight, endMissinCFilterHeight)
 	}
 }
 
 func (s *Syncer) fetchMissingCfiltersFinished() {
 	if s.notifications != nil && s.notifications.FetchMissingCFiltersFinished != nil {
-		s.notifications.FetchMissingCFiltersFinished()
+		s.notifications.FetchMissingCFiltersFinished(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) fetchHeadersStart() {
 	if s.notifications != nil && s.notifications.FetchHeadersStarted != nil {
-		s.notifications.FetchHeadersStarted()
+		s.notifications.FetchHeadersStarted(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) fetchHeadersProgress(lastHeader *wire.BlockHeader) {
 	if s.notifications != nil && s.notifications.FetchHeadersProgress != nil {
-		s.notifications.FetchHeadersProgress(int32(lastHeader.Height), lastHeader.Timestamp.Unix())
+		s.notifications.FetchHeadersProgress(s.syncingWalletAlias, int32(lastHeader.Height), lastHeader.Timestamp.Unix())
 	}
 }
 
 func (s *Syncer) fetchHeadersFinished() {
 	if s.notifications != nil && s.notifications.FetchHeadersFinished != nil {
-		s.notifications.FetchHeadersFinished()
+		s.notifications.FetchHeadersFinished(s.syncingWalletAlias)
 	}
 }
 func (s *Syncer) discoverAddressesStart() {
 	if s.notifications != nil && s.notifications.DiscoverAddressesStarted != nil {
-		s.notifications.DiscoverAddressesStarted()
+		s.notifications.DiscoverAddressesStarted(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) discoverAddressesFinished() {
 	if s.notifications != nil && s.notifications.DiscoverAddressesFinished != nil {
-		s.notifications.DiscoverAddressesFinished()
+		s.notifications.DiscoverAddressesFinished(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) rescanStart() {
 	if s.notifications != nil && s.notifications.RescanStarted != nil {
-		s.notifications.RescanStarted()
+		s.notifications.RescanStarted(s.syncingWalletAlias)
 	}
 }
 
 func (s *Syncer) rescanProgress(rescannedThrough int32) {
 	if s.notifications != nil && s.notifications.RescanProgress != nil {
-		s.notifications.RescanProgress(rescannedThrough)
+		s.notifications.RescanProgress(s.syncingWalletAlias, rescannedThrough)
 	}
 }
 
 func (s *Syncer) rescanFinished() {
 	if s.notifications != nil && s.notifications.RescanFinished != nil {
-		s.notifications.RescanFinished()
+		s.notifications.RescanFinished(s.syncingWalletAlias)
 	}
 }
 
@@ -273,6 +273,21 @@ func (s *Syncer) LowestChainTip() (chainhash.Hash, int32, *wallet.Wallet) {
 	}
 
 	return lowestTipHash, lowestTip, lowestTipWallet
+}
+
+func (s *Syncer) HighestChainTip() (chainhash.Hash, int32, *wallet.Wallet) {
+	var highestTip int32 = -1
+	var highestTipHash chainhash.Hash
+	var highestTipWallet *wallet.Wallet
+	for _, w := range s.wallets {
+		if hash, height := w.MainChainTip(); height > highestTip || highestTip == -1 {
+			highestTip = height
+			highestTipHash = hash
+			highestTipWallet = w
+		}
+	}
+
+	return highestTipHash, highestTip, highestTipWallet
 }
 
 // Run synchronizes the wallet, returning when synchronization fails or the
@@ -1118,10 +1133,8 @@ var hashStop chainhash.Hash
 // Returns when no more headers are available.  A sendheaders message is pushed
 // to the peer when there are no more headers to fetch.
 func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
-	syncingWallet, ok := s.wallets[s.syncingWalletAlias]
-	if !ok {
-		return errors.E(errors.Invalid)
-	}
+
+	_, _, lowestChainWallet := s.LowestChainTip()
 
 	var locators []*chainhash.Hash
 	var generation uint
@@ -1130,7 +1143,7 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 	locators = s.currentLocators
 	generation = s.locatorGeneration
 	if len(locators) == 0 {
-		locators, err = syncingWallet.BlockLocators(nil)
+		locators, err = lowestChainWallet.BlockLocators(nil)
 		if err != nil {
 			s.locatorMu.Unlock()
 			return err
@@ -1140,13 +1153,15 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 	}
 	s.locatorMu.Unlock()
 
-	var lastHeight int32
+	var lastHeight, lastNotificationHeight int32
 
 	for {
 		headers, err := rp.GetHeaders(ctx, locators, &hashStop)
 		if err != nil {
 			return err
 		}
+
+		log.Infof("Fetched %d headers", len(headers))
 
 		if len(headers) == 0 {
 			// Ensure that the peer provided headers through the height
@@ -1155,7 +1170,7 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 				// Peer may not have provided any headers if our own locators
 				// were up to date.  Compare the best locator hash with the
 				// advertised height.
-				h, err := syncingWallet.BlockHeader(locators[0])
+				h, err := lowestChainWallet.BlockHeader(locators[0])
 				if err == nil && int32(h.Height) < rp.InitialHeight() {
 					return errors.E(errors.Protocol, "peer did not provide "+
 						"headers through advertised height")
@@ -1187,83 +1202,90 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 			return err
 		}
 
-		var added int
-		s.sidechainMu.Lock()
-		for _, n := range nodes {
-			haveBlock, _, _ := syncingWallet.BlockInMainChain(n.Hash)
-			if haveBlock {
+		for walletAlias, w := range s.wallets {
+			var added int
+			s.sidechainMu.Lock()
+			for _, n := range nodes {
+				haveBlock, _, _ := w.BlockInMainChain(n.Hash)
+				if haveBlock {
+					continue
+				}
+				if s.sidechains.AddBlockNode(n) {
+					added++
+				}
+			}
+
+			if added == 0 {
+				s.sidechainMu.Unlock()
+
+				s.locatorMu.Lock()
+				if s.locatorGeneration > generation {
+					locators = s.currentLocators
+				}
+				if len(locators) == 0 {
+					locators, err = w.BlockLocators(nil)
+					if err != nil {
+						s.locatorMu.Unlock()
+						return err
+					}
+					s.currentLocators = locators
+					s.locatorGeneration++
+					generation = s.locatorGeneration
+				}
+				s.locatorMu.Unlock()
 				continue
 			}
-			if s.sidechains.AddBlockNode(n) {
-				added++
-			}
-		}
-		if added == 0 {
-			s.sidechainMu.Unlock()
 
-			s.locatorMu.Lock()
-			if s.locatorGeneration > generation {
-				locators = s.currentLocators
+			if lastHeight != lastNotificationHeight {
+				lastNotificationHeight = lastHeight\
+				s.fetchHeadersProgress(headers[len(headers)-1])
 			}
-			if len(locators) == 0 {
-				locators, err = syncingWallet.BlockLocators(nil)
-				if err != nil {
-					s.locatorMu.Unlock()
-					return err
+
+			log.Debugf("[%v] Fetched %d new header(s) ending at height %d from %v",
+				walletAlias, added, nodes[len(nodes)-1].Header.Height, rp)
+
+			bestChain, err := w.EvaluateBestChain(&s.sidechains)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+			if len(bestChain) == 0 {
+				s.sidechainMu.Unlock()
+				continue
+			}
+
+			_, err = w.ValidateHeaderChainDifficulties(bestChain, 0)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+
+			prevChain, err := w.ChainSwitch(&s.sidechains, bestChain, nil)
+			if err != nil {
+				s.sidechainMu.Unlock()
+				return err
+			}
+
+			if len(prevChain) != 0 {
+				log.Infof("[%s] Reorganize from %v to %v (total %d block(s) reorged)",
+					walletAlias, prevChain[len(prevChain)-1].Hash, bestChain[len(bestChain)-1].Hash, len(prevChain))
+				for _, n := range prevChain {
+					s.sidechains.AddBlockNode(n)
 				}
-				s.currentLocators = locators
-				s.locatorGeneration++
-				generation = s.locatorGeneration
 			}
-			s.locatorMu.Unlock()
-			continue
-		}
-		s.fetchHeadersProgress(headers[len(headers)-1])
-		log.Debugf("[%v] Fetched %d new header(s) ending at height %d from %v",
-			s.syncingWalletAlias, added, nodes[len(nodes)-1].Header.Height, rp)
-
-		bestChain, err := syncingWallet.EvaluateBestChain(&s.sidechains)
-		if err != nil {
-			s.sidechainMu.Unlock()
-			return err
-		}
-		if len(bestChain) == 0 {
-			s.sidechainMu.Unlock()
-			continue
-		}
-
-		_, err = syncingWallet.ValidateHeaderChainDifficulties(bestChain, 0)
-		if err != nil {
-			s.sidechainMu.Unlock()
-			return err
-		}
-
-		prevChain, err := syncingWallet.ChainSwitch(&s.sidechains, bestChain, nil)
-		if err != nil {
-			s.sidechainMu.Unlock()
-			return err
-		}
-
-		if len(prevChain) != 0 {
-			log.Infof("[%s] Reorganize from %v to %v (total %d block(s) reorged)",
-				s.syncingWalletAlias, prevChain[len(prevChain)-1].Hash, bestChain[len(bestChain)-1].Hash, len(prevChain))
-			for _, n := range prevChain {
-				s.sidechains.AddBlockNode(n)
+			tip := bestChain[len(bestChain)-1]
+			if len(bestChain) == 1 {
+				log.Infof("[%s] Connected block %v, height %d", walletAlias, tip.Hash, tip.Header.Height)
+			} else {
+				log.Infof("[%s] Connected %d blocks, new tip %v, height %d, date %v",
+					walletAlias, len(bestChain), tip.Hash, tip.Header.Height, tip.Header.Timestamp)
 			}
+			s.sidechainMu.Unlock()
 		}
-		tip := bestChain[len(bestChain)-1]
-		if len(bestChain) == 1 {
-			log.Infof("[%s] Connected block %v, height %d", s.syncingWalletAlias, tip.Hash, tip.Header.Height)
-		} else {
-			log.Infof("[%s] Connected %d blocks, new tip %v, height %d, date %v",
-				s.syncingWalletAlias, len(bestChain), tip.Hash, tip.Header.Height, tip.Header.Timestamp)
-		}
-
-		s.sidechainMu.Unlock()
 
 		// Generate new locators
 		s.locatorMu.Lock()
-		locators, err = syncingWallet.BlockLocators(nil)
+		locators, err = lowestChainWallet.BlockLocators(nil)
 		if err != nil {
 			s.locatorMu.Unlock()
 			return err
@@ -1276,7 +1298,8 @@ func (s *Syncer) getHeaders(ctx context.Context, rp *p2p.RemotePeer) error {
 }
 
 func (s *Syncer) fetchMissingCFilters(ctx context.Context, rp *p2p.RemotePeer) error {
-	for _, w := range s.wallets {
+	for walletAlias, w := range s.wallets {
+		s.syncingWalletAlias = walletAlias
 		s.fetchMissingCfiltersStart()
 		progress := make(chan wallet.MissingCFilterProgress, 1)
 		go w.FetchMissingCFiltersWithProgress(ctx, rp, progress)
@@ -1294,38 +1317,30 @@ func (s *Syncer) fetchMissingCFilters(ctx context.Context, rp *p2p.RemotePeer) e
 
 func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 	log.Infof("Syncing %d wallets", len(s.wallets))
+
+	_, _, highestChainWallet := s.HighestChainTip()
+	
+	// Disconnect from the peer if their advertised block height is
+	// significantly behind the wallet's.
+	_, tipHeight := highestChainWallet.MainChainTip()
+	if rp.InitialHeight() < tipHeight-6 {
+		return errors.E("peer is not synced")
+	}
+
+	s.fetchMissingCFilters(ctx, rp)
+
+	// Fetch any unseen headers from the peer.
+	s.fetchHeadersStart()
+	log.Infof("About to fetch headers")
+	log.Debugf("Fetching headers from %v", rp.RemoteAddr())
+	err := s.getHeaders(ctx, rp)
+	if err != nil {
+		return err
+	}
+	s.fetchHeadersFinished()
+	log.Infof("Finished")
+
 	for key, w := range s.wallets {
-		log.Info("Syncing wallet:", key)
-		s.syncingWalletAlias = key
-		// Disconnect from the peer if their advertised block height is
-		// significantly behind the wallet's.
-		_, tipHeight := w.MainChainTip()
-		if rp.InitialHeight() < tipHeight-6 {
-			return errors.E("peer is not synced")
-		}
-		s.fetchMissingCfiltersStart()
-		progress := make(chan wallet.MissingCFilterProgress, 1)
-		go w.FetchMissingCFiltersWithProgress(ctx, rp, progress)
-
-		for p := range progress {
-			if p.Err != nil {
-				return p.Err
-			}
-			s.fetchMissingCfiltersProgress(p.BlockHeightStart, p.BlockHeightEnd)
-		}
-		s.fetchMissingCfiltersFinished()
-
-		// Fetch any unseen headers from the peer.
-		s.fetchHeadersStart()
-		log.Infof("[%s] About to fetch headers", key)
-		log.Debugf("[%s] Fetching headers from %v", key, rp.RemoteAddr())
-		err := s.getHeaders(ctx, rp)
-		if err != nil {
-			return err
-		}
-		s.fetchHeadersFinished()
-		log.Infof("[%s] Finished", key)
-
 		if atomic.CompareAndSwapUint32(&s.atomicCatchUpTryLock, 0, 1) {
 			err = func() error {
 				rescanPoint, err := w.RescanPoint()
@@ -1382,7 +1397,7 @@ func (s *Syncer) startupSync(ctx context.Context, rp *p2p.RemotePeer) error {
 					s.rescanProgress(p.ScannedThrough)
 				}
 				s.rescanFinished()
-				log.Infof("[%s] Finished", key)
+				log.Infof("[%s] Finished Scanning", key)
 
 				s.synced()
 				log.Infof("[%s] Synced", key)
