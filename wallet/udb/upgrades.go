@@ -964,9 +964,14 @@ func ticketCommitmentsUpgrade(tx walletdb.ReadWriteTx, publicPassphrase []byte, 
 	// Rescan the database for stake transactions, creating the commitments when
 	// a ticket is found and deleting it when a vote/revocation is found.
 	it := makeReadBlockIterator(txmgrBucket, 0)
-	var txrec TxRecord
+	iteratorElems := make([][]chainhash.Hash, 0)
 	for it.next() {
-		for _, txh := range it.elem.transactions {
+		iteratorElems = append(iteratorElems, it.elem.transactions)
+	}
+
+	var txrec TxRecord
+	for _, elem := range iteratorElems {
+		for _, txh := range elem {
 			_, v := latestTxRecord(txmgrBucket, txh[:])
 			err = readRawTxRecord(&txh, v, &txrec)
 			if err != nil {
