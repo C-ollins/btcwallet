@@ -362,10 +362,12 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []btcutil.Addre
 			bestBlock.Hash, err)
 	}
 
+	log.Infof("Rescan starting Start hash: %s, Bestblock hash: %s", startHash, header.BlockHash())
 	// If the wallet is already fully caught up, or the rescan has started
 	// with state that indicates a "fresh" wallet, we'll send a
 	// notification indicating the rescan has "finished".
 	if header.BlockHash() == *startHash {
+		log.Info("Start hash and end hash is equal")
 		s.clientMtx.Lock()
 		s.finished = true
 		rescanQuit := s.rescanQuit
@@ -381,8 +383,10 @@ func (s *NeutrinoClient) Rescan(startHash *chainhash.Hash, addrs []btcutil.Addre
 			Time:   header.Timestamp,
 		}:
 		case <-s.quit:
+			log.Info("Rescan quiting 1")
 			return nil
 		case <-rescanQuit:
+			log.Info("Rescan quiting 2")
 			return nil
 		}
 	}
@@ -552,7 +556,7 @@ func (s *NeutrinoClient) onBlockDisconnected(hash *chainhash.Hash, height int32,
 }
 
 func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
-	time time.Time) {
+	blockTime time.Time) {
 	// TODO: Move this closure out and parameterize it? Is it useful
 	// outside here?
 	sendRescanProgress := func() {
@@ -560,16 +564,17 @@ func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
 		case s.enqueueNotification <- &RescanProgress{
 			Hash:   hash,
 			Height: height,
-			Time:   time,
+			Time:   blockTime,
 		}:
 		case <-s.quit:
 		case <-s.rescanQuit:
 		}
 	}
 	// Only send BlockConnected notification if we're processing blocks
-	// before the birthday. Otherwise, we can just update using
+	// before the 1 hour ago. Otherwise, we can just update using
 	// RescanProgress notifications.
-	if time.Before(s.startTime) {
+	now := time.Now().Add(-1 * time.Hour)
+	if blockTime.Before(now) {
 		// Send a RescanProgress notification every 10K blocks.
 		if height%10000 == 0 {
 			s.clientMtx.Lock()
@@ -594,13 +599,14 @@ func (s *NeutrinoClient) onBlockConnected(hash *chainhash.Hash, height int32,
 			}
 		}
 		s.clientMtx.Unlock()
+		log.Info("Sending block connected notification")
 		select {
 		case s.enqueueNotification <- BlockConnected{
 			Block: wtxmgr.Block{
 				Hash:   *hash,
 				Height: height,
 			},
-			Time: time,
+			Time: blockTime,
 		}:
 		case <-s.quit:
 		case <-s.rescanQuit:
@@ -646,6 +652,7 @@ func (s *NeutrinoClient) dispatchRescanFinished() {
 	header := s.lastFilteredBlockHeader
 	s.clientMtx.Unlock()
 
+	log.Info("Sending rescan finished notification")
 	select {
 	case s.enqueueNotification <- &RescanFinished{
 		Hash:   &bs.Hash,
@@ -730,6 +737,7 @@ out:
 			}
 
 		case err := <-rescanErr:
+			log.Info("Rescan error 1:", err)
 			if err != nil {
 				log.Errorf("Neutrino rescan ended with error: %s", err)
 			}

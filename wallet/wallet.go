@@ -154,12 +154,12 @@ func (w *Wallet) Start() {
 //
 // This method is unstable and will be removed when all syncing logic is moved
 // outside of the wallet package.
-func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
+func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) error {
 	w.quitMu.Lock()
 	select {
 	case <-w.quit:
 		w.quitMu.Unlock()
-		return
+		return errors.New("Wallet is quiting")
 	default:
 	}
 	w.quitMu.Unlock()
@@ -169,7 +169,7 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	w.chainClientLock.Lock()
 	if w.chainClient != nil {
 		w.chainClientLock.Unlock()
-		return
+		return errors.New("Chain client already exists")
 	}
 	w.chainClient = chainClient
 
@@ -192,6 +192,8 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanBatchHandler()
 	go w.rescanProgressHandler()
 	go w.rescanRPCHandler()
+
+	return nil
 }
 
 // requireChainClient marks that a wallet method can only be completed when the
@@ -393,10 +395,13 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 	// If the wallet requested an on-chain recovery of its funds, we'll do
 	// so now.
 	if w.recoveryWindow > 0 {
+		log.Infof("Recovery window: %d, Attempting recovery", w.recoveryWindow)
 		if err := w.recovery(chainClient, birthdayStamp); err != nil {
 			return fmt.Errorf("unable to perform wallet recovery: "+
 				"%v", err)
 		}
+	} else {
+		log.Info("RECVOERY MODE DISABLED")
 	}
 
 	// Compare previously-seen blocks against the current chain. If any of
@@ -494,7 +499,8 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 		return err
 	}
 
-	return w.rescanWithTarget(addrs, unspent, nil)
+	log.Info("Rescanining sync: ", birthdayStamp.Height)
+	return w.rescanWithTarget(addrs, unspent, birthdayStamp)
 }
 
 // isDevEnv determines whether the wallet is currently under a local developer

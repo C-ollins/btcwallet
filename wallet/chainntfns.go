@@ -84,6 +84,34 @@ func (w *Wallet) handleChainNotifications() {
 		return err
 	}
 
+	// Start syncing immediately
+	go func() {
+		log.Info("Attempting sync")
+		// Before attempting to sync with our backend,
+		// we'll make sure that our birthday block has
+		// been set correctly to potentially prevent
+		// missing relevant events.
+		birthdayStore := &walletBirthdayStore{
+			db:      w.db,
+			manager: w.Manager,
+		}
+		birthdayBlock, err := birthdaySanityCheck(
+			chainClient, birthdayStore,
+		)
+		if err != nil && !waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
+			panic(fmt.Errorf("Unable to sanity "+
+				"check wallet birthday block: %v",
+				err))
+		}
+
+		err = w.syncWithChain(birthdayBlock)
+		if err != nil && !w.ShuttingDown() {
+			panic(fmt.Errorf("Unable to synchronize "+
+				"wallet to chain: %v", err))
+		}
+	}()
+
+	log.Info("Wallet notifications listening")
 	for {
 		select {
 		case n, ok := <-chainClient.Notifications():
@@ -95,28 +123,8 @@ func (w *Wallet) handleChainNotifications() {
 			var err error
 			switch n := n.(type) {
 			case chain.ClientConnected:
-				// Before attempting to sync with our backend,
-				// we'll make sure that our birthday block has
-				// been set correctly to potentially prevent
-				// missing relevant events.
-				birthdayStore := &walletBirthdayStore{
-					db:      w.db,
-					manager: w.Manager,
-				}
-				birthdayBlock, err := birthdaySanityCheck(
-					chainClient, birthdayStore,
-				)
-				if err != nil && !waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
-					panic(fmt.Errorf("Unable to sanity "+
-						"check wallet birthday block: %v",
-						err))
-				}
+				// log.Info("Client connected, might attempt sync")
 
-				err = w.syncWithChain(birthdayBlock)
-				if err != nil && !w.ShuttingDown() {
-					panic(fmt.Errorf("Unable to synchronize "+
-						"wallet to chain: %v", err))
-				}
 			case chain.BlockConnected:
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.connectBlock(tx, wtxmgr.BlockMeta(n))
@@ -164,6 +172,7 @@ func (w *Wallet) handleChainNotifications() {
 				err = catchUpHashes(w, chainClient, n.Height)
 				notificationName = "rescan finished"
 				w.SetChainSynced(true)
+				log.Info("Chain synced!")
 				select {
 				case w.rescanNotifications <- n:
 				case <-w.quitChan():

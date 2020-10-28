@@ -253,6 +253,7 @@ out:
 			noun := pickNoun(numAddrs, "address", "addresses")
 			log.Infof("Started rescan from block %v (height %d) for %d %s",
 				batch.bs.Hash, batch.bs.Height, numAddrs, noun)
+			log.Info("Addresses:", batch.addrs)
 
 			err := chainClient.Rescan(&batch.bs.Hash, batch.addrs,
 				batch.outpoints)
