@@ -6,13 +6,11 @@ package wallet
 
 import (
 	"bytes"
-	"fmt"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/btcsuite/btcwallet/wtxmgr"
@@ -25,184 +23,59 @@ const (
 	birthdayBlockDelta = 2 * time.Hour
 )
 
-func (w *Wallet) handleChainNotifications() {
-	defer w.wg.Done()
+func (w *Wallet) CatchUpHashes(height int32) error {
 
 	chainClient, err := w.requireChainClient()
 	if err != nil {
-		log.Errorf("handleChainNotifications called without RPC client")
-		return
-	}
-
-	catchUpHashes := func(w *Wallet, client chain.Interface,
-		height int32) error {
-		// TODO(aakselrod): There's a race conditon here, which
-		// happens when a reorg occurs between the
-		// rescanProgress notification and the last GetBlockHash
-		// call. The solution when using btcd is to make btcd
-		// send blockconnected notifications with each block
-		// the way Neutrino does, and get rid of the loop. The
-		// other alternative is to check the final hash and,
-		// if it doesn't match the original hash returned by
-		// the notification, to roll back and restart the
-		// rescan.
-		log.Infof("Catching up block hashes to height %d, this"+
-			" might take a while", height)
-		err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-			ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-
-			startBlock := w.Manager.SyncedTo()
-
-			for i := startBlock.Height + 1; i <= height; i++ {
-				hash, err := client.GetBlockHash(int64(i))
-				if err != nil {
-					return err
-				}
-				header, err := chainClient.GetBlockHeader(hash)
-				if err != nil {
-					return err
-				}
-
-				bs := waddrmgr.BlockStamp{
-					Height:    i,
-					Hash:      *hash,
-					Timestamp: header.Timestamp,
-				}
-				err = w.Manager.SetSyncedTo(ns, &bs)
-				if err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			log.Errorf("Failed to update address manager "+
-				"sync state for height %d: %v", height, err)
-		}
-
-		log.Info("Done catching up block hashes")
 		return err
 	}
 
-	// Start syncing immediately
-	go func() {
-		log.Info("Attempting sync")
-		// Before attempting to sync with our backend,
-		// we'll make sure that our birthday block has
-		// been set correctly to potentially prevent
-		// missing relevant events.
-		birthdayStore := &walletBirthdayStore{
-			db:      w.db,
-			manager: w.Manager,
-		}
-		birthdayBlock, err := birthdaySanityCheck(
-			chainClient, birthdayStore,
-		)
-		if err != nil && !waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
-			panic(fmt.Errorf("Unable to sanity "+
-				"check wallet birthday block: %v",
-				err))
-		}
+	// TODO(aakselrod): There's a race conditon here, which
+	// happens when a reorg occurs between the
+	// rescanProgress notification and the last GetBlockHash
+	// call. The solution when using btcd is to make btcd
+	// send blockconnected notifications with each block
+	// the way Neutrino does, and get rid of the loop. The
+	// other alternative is to check the final hash and,
+	// if it doesn't match the original hash returned by
+	// the notification, to roll back and restart the
+	// rescan.
+	log.Infof("Catching up block hashes to height %d, this"+
+		" might take a while", height)
+	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
 
-		err = w.syncWithChain(birthdayBlock)
-		if err != nil && !w.ShuttingDown() {
-			panic(fmt.Errorf("Unable to synchronize "+
-				"wallet to chain: %v", err))
-		}
-	}()
-
-	log.Info("Wallet notifications listening")
-	for {
-		select {
-		case n, ok := <-chainClient.Notifications():
-			if !ok {
-				return
-			}
-
-			var notificationName string
-			var err error
-			switch n := n.(type) {
-			case chain.ClientConnected:
-				// log.Info("Client connected, might attempt sync")
-
-			case chain.BlockConnected:
-				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-					return w.connectBlock(tx, wtxmgr.BlockMeta(n))
-				})
-				notificationName = "block connected"
-			case chain.BlockDisconnected:
-				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-					return w.disconnectBlock(tx, wtxmgr.BlockMeta(n))
-				})
-				notificationName = "block disconnected"
-			case chain.RelevantTx:
-				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-					return w.addRelevantTx(tx, n.TxRecord, n.Block)
-				})
-				notificationName = "relevant transaction"
-			case chain.FilteredBlockConnected:
-				// Atomically update for the whole block.
-				if len(n.RelevantTxs) > 0 {
-					err = walletdb.Update(w.db, func(
-						tx walletdb.ReadWriteTx) error {
-						var err error
-						for _, rec := range n.RelevantTxs {
-							err = w.addRelevantTx(tx, rec,
-								n.Block)
-							if err != nil {
-								return err
-							}
-						}
-						return nil
-					})
-				}
-				notificationName = "filtered block connected"
-
-			// The following require some database maintenance, but also
-			// need to be reported to the wallet's rescan goroutine.
-			case *chain.RescanProgress:
-				err = catchUpHashes(w, chainClient, n.Height)
-				notificationName = "rescan progress"
-				select {
-				case w.rescanNotifications <- n:
-				case <-w.quitChan():
-					return
-				}
-			case *chain.RescanFinished:
-				err = catchUpHashes(w, chainClient, n.Height)
-				notificationName = "rescan finished"
-				w.SetChainSynced(true)
-				log.Info("Chain synced!")
-				select {
-				case w.rescanNotifications <- n:
-				case <-w.quitChan():
-					return
-				}
-			}
+		startBlock := w.Manager.SyncedTo()
+		for i := startBlock.Height + 1; i <= height; i++ {
+			hash, err := chainClient.GetBlockHash(int64(i))
 			if err != nil {
-				// If we received a block connected notification
-				// while rescanning, then we can ignore logging
-				// the error as we'll properly catch up once we
-				// process the RescanFinished notification.
-				if notificationName == "block connected" &&
-					waddrmgr.IsError(err, waddrmgr.ErrBlockNotFound) &&
-					!w.ChainSynced() {
-
-					log.Debugf("Received block connected "+
-						"notification for height %v "+
-						"while rescanning",
-						n.(chain.BlockConnected).Height)
-					continue
-				}
-
-				log.Errorf("Unable to process chain backend "+
-					"%v notification: %v", notificationName,
-					err)
+				return err
 			}
-		case <-w.quit:
-			return
+			header, err := chainClient.GetBlockHeader(hash)
+			if err != nil {
+				return err
+			}
+
+			bs := waddrmgr.BlockStamp{
+				Height:    i,
+				Hash:      *hash,
+				Timestamp: header.Timestamp,
+			}
+			err = w.Manager.SetSyncedTo(ns, &bs)
+			if err != nil {
+				return err
+			}
 		}
+
+		log.Infof("Done catching up block hashes %d to %d", startBlock.Height, height)
+		return nil
+	})
+	if err != nil {
+		log.Errorf("Failed to update address manager "+
+			"sync state for height %d: %v", height, err)
 	}
+
+	return err
 }
 
 // connectBlock handles a chain server notification by marking a wallet
@@ -226,6 +99,13 @@ func (w *Wallet) connectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) err
 	// TODO: move all notifications outside of the database transaction.
 	w.NtfnServer.notifyAttachedBlock(dbtx, &b)
 	return nil
+}
+
+func (w *Wallet) ConnectBlock(block wtxmgr.BlockMeta) error {
+	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		return w.connectBlock(tx, block)
+	})
+	return err
 }
 
 // disconnectBlock handles a chain server reorganize by rolling back all
@@ -279,6 +159,13 @@ func (w *Wallet) disconnectBlock(dbtx walletdb.ReadWriteTx, b wtxmgr.BlockMeta) 
 	w.NtfnServer.notifyDetachedBlock(&b.Hash)
 
 	return nil
+}
+
+func (w *Wallet) DisconnectBlock(block wtxmgr.BlockMeta) error {
+	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		return w.connectBlock(tx, block)
+	})
+	return err
 }
 
 func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
@@ -364,6 +251,13 @@ func (w *Wallet) addRelevantTx(dbtx walletdb.ReadWriteTx, rec *wtxmgr.TxRecord, 
 	}
 
 	return nil
+}
+
+func (w *Wallet) AddRelevantTx(rec *wtxmgr.TxRecord, block *wtxmgr.BlockMeta) error {
+	err := walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		return w.addRelevantTx(tx, rec, block)
+	})
+	return err
 }
 
 // chainConn is an interface that abstracts the chain connection logic required

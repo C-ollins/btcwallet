@@ -36,6 +36,10 @@ func (m *mockChainClient) GetBlockHash(int64) (*chainhash.Hash, error) {
 	return nil, nil
 }
 
+func (m *mockChainClient) GetBlockHeight(*chainhash.Hash) (int32, error) {
+	return -1, nil
+}
+
 func (m *mockChainClient) GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader,
 	error) {
 	return nil, nil
@@ -63,8 +67,7 @@ func (m *mockChainClient) SendRawTransaction(*wire.MsgTx, bool) (
 	return nil, nil
 }
 
-func (m *mockChainClient) Rescan(*chainhash.Hash, []btcutil.Address,
-	map[wire.OutPoint]btcutil.Address) error {
+func (m *mockChainClient) Rescan(startHeight int64) error {
 	return nil
 }
 

@@ -6,6 +6,7 @@ package chain
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -154,19 +155,22 @@ func (c *RPCClient) IsCurrent() bool {
 	return bestHeader.Timestamp.After(time.Now().Add(-isCurrentDelta))
 }
 
+func (c *RPCClient) GetBlockHeight(hash *chainhash.Hash) (int32, error) {
+	return -1, fmt.Errorf("not implemented")
+}
+
 // Rescan wraps the normal Rescan command with an additional paramter that
 // allows us to map an oupoint to the address in the chain that it pays to.
 // This is useful when using BIP 158 filters as they include the prev pkScript
 // rather than the full outpoint.
-func (c *RPCClient) Rescan(startHash *chainhash.Hash, addrs []btcutil.Address,
-	outPoints map[wire.OutPoint]btcutil.Address) error {
+func (c *RPCClient) Rescan(startHeight int64) error {
 
-	flatOutpoints := make([]*wire.OutPoint, 0, len(outPoints))
-	for ops := range outPoints {
-		flatOutpoints = append(flatOutpoints, &ops)
-	}
+	// flatOutpoints := make([]*wire.OutPoint, 0, len(outPoints))
+	// for ops := range outPoints {
+	// 	flatOutpoints = append(flatOutpoints, &ops)
+	// }
 
-	return c.Client.Rescan(startHash, addrs, flatOutpoints)
+	return c.Client.Rescan(nil, nil, nil)
 }
 
 // WaitForShutdown blocks until both the client has finished disconnecting
@@ -209,7 +213,7 @@ func (c *RPCClient) FilterBlocks(
 
 	// Construct the watchlist using the addresses and outpoints contained
 	// in the filter blocks request.
-	watchList, err := buildFilterBlocksWatchList(req)
+	watchList, err := BuildFilterBlocksWatchList(req)
 	if err != nil {
 		return nil, err
 	}

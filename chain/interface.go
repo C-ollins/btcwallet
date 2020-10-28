@@ -34,13 +34,14 @@ type Interface interface {
 	WaitForShutdown()
 	GetBestBlock() (*chainhash.Hash, int32, error)
 	GetBlock(*chainhash.Hash) (*wire.MsgBlock, error)
+	GetBlockHeight(hash *chainhash.Hash) (int32, error)
 	GetBlockHash(int64) (*chainhash.Hash, error)
 	GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader, error)
 	IsCurrent() bool
 	FilterBlocks(*FilterBlocksRequest) (*FilterBlocksResponse, error)
 	BlockStamp() (*waddrmgr.BlockStamp, error)
 	SendRawTransaction(*wire.MsgTx, bool) (*chainhash.Hash, error)
-	Rescan(*chainhash.Hash, []btcutil.Address, map[wire.OutPoint]btcutil.Address) error
+	Rescan(startHeight int64) error
 	NotifyReceived([]btcutil.Address) error
 	NotifyBlocks() error
 	Notifications() <-chan interface{}

@@ -90,15 +90,6 @@ type Wallet struct {
 
 	recoveryWindow uint32
 
-	// Channels for rescan processing.  Requests are added and merged with
-	// any waiting requests, before being sent to another goroutine to
-	// call the rescan RPC.
-	rescanAddJob        chan *RescanJob
-	rescanBatch         chan *rescanBatch
-	rescanNotifications chan interface{} // From chain server
-	rescanProgress      chan *RescanProgressMsg
-	rescanFinished      chan *RescanFinishedMsg
-
 	// Channel for transaction creation requests.
 	createTxRequests chan createTxRequest
 
@@ -148,6 +139,23 @@ func (w *Wallet) Start() {
 	go w.walletLocker()
 }
 
+func (w *Wallet) BirthdayBlock() (*waddrmgr.BlockStamp, error) {
+
+	chainClient, err := w.requireChainClient()
+	if err != nil {
+		return nil, err
+	}
+
+	birthdayStore := &walletBirthdayStore{
+		db:      w.db,
+		manager: w.Manager,
+	}
+
+	return birthdaySanityCheck(
+		chainClient, birthdayStore,
+	)
+}
+
 // SynchronizeRPC associates the wallet with the consensus RPC client,
 // synchronizes the wallet with the latest changes to the blockchain, and
 // continuously updates the wallet through RPC notifications.
@@ -171,27 +179,9 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) error {
 		w.chainClientLock.Unlock()
 		return errors.New("Chain client already exists")
 	}
+
 	w.chainClient = chainClient
-
-	// If the chain client is a NeutrinoClient instance, set a birthday so
-	// we don't download all the filters as we go.
-	switch cc := chainClient.(type) {
-	case *chain.NeutrinoClient:
-		cc.SetStartTime(w.Manager.Birthday())
-	case *chain.BitcoindClient:
-		cc.SetBirthday(w.Manager.Birthday())
-	}
 	w.chainClientLock.Unlock()
-
-	// TODO: It would be preferable to either run these goroutines
-	// separately from the wallet (use wallet mutator functions to
-	// make changes from the RPC client) and not have to stop and
-	// restart them each time the client disconnects and reconnets.
-	w.wg.Add(4)
-	go w.handleChainNotifications()
-	go w.rescanBatchHandler()
-	go w.rescanProgressHandler()
-	go w.rescanRPCHandler()
 
 	return nil
 }
@@ -305,9 +295,6 @@ func (w *Wallet) SetChainSynced(synced bool) {
 	w.chainClientSyncMtx.Unlock()
 }
 
-// activeData returns the currently-active receiving addresses and all unspent
-// outputs.  This is primarely intended to provide the parameters for a
-// rescan request.
 func (w *Wallet) activeData(dbtx walletdb.ReadTx) ([]btcutil.Address, []wtxmgr.Credit, error) {
 	addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
 	txmgrNs := dbtx.ReadBucket(wtxmgrNamespaceKey)
@@ -324,89 +311,46 @@ func (w *Wallet) activeData(dbtx walletdb.ReadTx) ([]btcutil.Address, []wtxmgr.C
 	return addrs, unspent, err
 }
 
-// syncWithChain brings the wallet up to date with the current chain server
-// connection. It creates a rescan request and blocks until the rescan has
-// finished. The birthday block can be passed in, if set, to ensure we can
-// properly detect if it gets rolled back.
-func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
+// ActiveData returns the currently-active receiving addresses and all unspent
+// outpoints. This is primarely intended to provide the parameters for a
+// rescan request.
+func (w *Wallet) ActiveData() ([]btcutil.Address, map[wire.OutPoint]btcutil.Address, error) {
+
+	var addrs []btcutil.Address
+	var unspent []wtxmgr.Credit
+	var err error
+	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
+		addrs, unspent, err = w.activeData(dbtx)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	outpoints := make(map[wire.OutPoint]btcutil.Address, len(unspent))
+	for _, output := range unspent {
+		_, outputAddrs, _, err := txscript.ExtractPkScriptAddrs(
+			output.PkScript, w.chainParams,
+		)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		outpoints[output.OutPoint] = outputAddrs[0]
+	}
+
+	return addrs, outpoints, nil
+}
+
+// RollbackMissingBlocks compares previously-seen blocks against the
+// current chain. If any of these blocks no longer exist, rollback all
+// of the missing blocks before catching up with the rescan.
+func (w *Wallet) RollbackMissingBlocks(birthdayStamp *waddrmgr.BlockStamp) error {
 	chainClient, err := w.requireChainClient()
 	if err != nil {
 		return err
 	}
 
-	// We'll wait until the backend is synced to ensure we get the latest
-	// MaxReorgDepth blocks to store. We don't do this for development
-	// environments as we can't guarantee a lively chain.
-	if !w.isDevEnv() {
-		log.Debug("Waiting for chain backend to sync to tip")
-		if err := w.waitUntilBackendSynced(chainClient); err != nil {
-			return err
-		}
-		log.Debug("Chain backend synced to tip!")
-	}
-
-	// If we've yet to find our birthday block, we'll do so now.
-	if birthdayStamp == nil {
-		var err error
-		birthdayStamp, err = locateBirthdayBlock(
-			chainClient, w.Manager.Birthday(),
-		)
-		if err != nil {
-			return fmt.Errorf("unable to locate birthday block: %v",
-				err)
-		}
-
-		// We'll also determine our initial sync starting height. This
-		// is needed as the wallet can now begin storing blocks from an
-		// arbitrary height, rather than all the blocks from genesis, so
-		// we persist this height to ensure we don't store any blocks
-		// before it.
-		startHeight := birthdayStamp.Height
-
-		// With the starting height obtained, get the remaining block
-		// details required by the wallet.
-		startHash, err := chainClient.GetBlockHash(int64(startHeight))
-		if err != nil {
-			return err
-		}
-		startHeader, err := chainClient.GetBlockHeader(startHash)
-		if err != nil {
-			return err
-		}
-
-		err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
-			ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-			err := w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
-				Hash:      *startHash,
-				Height:    startHeight,
-				Timestamp: startHeader.Timestamp,
-			})
-			if err != nil {
-				return err
-			}
-			return w.Manager.SetBirthdayBlock(ns, *birthdayStamp, true)
-		})
-		if err != nil {
-			return fmt.Errorf("unable to persist initial sync "+
-				"data: %v", err)
-		}
-	}
-
-	// If the wallet requested an on-chain recovery of its funds, we'll do
-	// so now.
-	if w.recoveryWindow > 0 {
-		log.Infof("Recovery window: %d, Attempting recovery", w.recoveryWindow)
-		if err := w.recovery(chainClient, birthdayStamp); err != nil {
-			return fmt.Errorf("unable to perform wallet recovery: "+
-				"%v", err)
-		}
-	} else {
-		log.Info("RECVOERY MODE DISABLED")
-	}
-
-	// Compare previously-seen blocks against the current chain. If any of
-	// these blocks no longer exist, rollback all of the missing blocks
-	// before catching up with the rescan.
 	rollback := false
 	rollbackStamp := w.Manager.SyncedTo()
 	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
@@ -468,40 +412,10 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 		// prevent unconfirming transactions in the synced-to block.
 		return w.TxStore.Rollback(txmgrNs, rollbackStamp.Height+1)
 	})
-	if err != nil {
-		return err
-	}
+	return err
 
-	// Request notifications for connected and disconnected blocks.
-	//
-	// TODO(jrick): Either request this notification only once, or when
-	// rpcclient is modified to allow some notification request to not
-	// automatically resent on reconnect, include the notifyblocks request
-	// as well.  I am leaning towards allowing off all rpcclient
-	// notification re-registrations, in which case the code here should be
-	// left as is.
-	if err := chainClient.NotifyBlocks(); err != nil {
-		return err
-	}
-
-	// Finally, we'll trigger a wallet rescan and request notifications for
-	// transactions sending to all wallet addresses and spending all wallet
-	// UTXOs.
-	var (
-		addrs   []btcutil.Address
-		unspent []wtxmgr.Credit
-	)
-	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
-		addrs, unspent, err = w.activeData(dbtx)
-		return err
-	})
-	if err != nil {
-		return err
-	}
-
-	log.Info("Rescanining sync: ", birthdayStamp.Height)
-	return w.rescanWithTarget(addrs, unspent, birthdayStamp)
 }
+
 
 // isDevEnv determines whether the wallet is currently under a local developer
 // environment, e.g. simnet or regtest.
@@ -2178,13 +2092,7 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 			switch client := chainClient.(type) {
 			case *chain.RPCClient:
 				startResp = client.GetBlockVerboseTxAsync(startBlock.hash)
-			case *chain.BitcoindClient:
-				var err error
-				start, err = client.GetBlockHeight(startBlock.hash)
-				if err != nil {
-					return nil, err
-				}
-			case *chain.NeutrinoClient:
+			default:
 				var err error
 				start, err = client.GetBlockHeight(startBlock.hash)
 				if err != nil {
@@ -2203,7 +2111,7 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 			switch client := chainClient.(type) {
 			case *chain.RPCClient:
 				endResp = client.GetBlockVerboseTxAsync(endBlock.hash)
-			case *chain.NeutrinoClient:
+			default:
 				var err error
 				end, err = client.GetBlockHeight(endBlock.hash)
 				if err != nil {
@@ -2212,6 +2120,7 @@ func (w *Wallet) GetTransactions(startBlock, endBlock *BlockIdentifier, cancel <
 			}
 		}
 	}
+
 	if startResp != nil {
 		resp, err := startResp.Receive()
 		if err != nil {
@@ -2748,17 +2657,17 @@ func (w *Wallet) ImportPrivateKey(scope waddrmgr.KeyScope, wif *btcutil.WIF,
 	// Rescan blockchain for transactions with txout scripts paying to the
 	// imported address.
 	if rescan {
-		job := &RescanJob{
-			Addrs:      []btcutil.Address{addr},
-			OutPoints:  nil,
-			BlockStamp: *bs,
-		}
+		// job := &RescanJob{
+		// 	Addrs:      []btcutil.Address{addr},
+		// 	OutPoints:  nil,
+		// 	BlockStamp: *bs,
+		// }
 
-		// Submit rescan job and log when the import has completed.
-		// Do not block on finishing the rescan.  The rescan success
-		// or failure is logged elsewhere, and the channel is not
-		// required to be read, so discard the return value.
-		_ = w.SubmitRescan(job)
+		// // Submit rescan job and log when the import has completed.
+		// // Do not block on finishing the rescan.  The rescan success
+		// // or failure is logged elsewhere, and the channel is not
+		// // required to be read, so discard the return value.
+		// _ = w.SubmitRescan(job)
 	} else {
 		err := w.chainClient.NotifyReceived([]btcutil.Address{addr})
 		if err != nil {
@@ -3705,11 +3614,6 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 		TxStore:             txMgr,
 		lockedOutpoints:     map[wire.OutPoint]struct{}{},
 		recoveryWindow:      recoveryWindow,
-		rescanAddJob:        make(chan *RescanJob),
-		rescanBatch:         make(chan *rescanBatch),
-		rescanNotifications: make(chan interface{}),
-		rescanProgress:      make(chan *RescanProgressMsg),
-		rescanFinished:      make(chan *RescanFinishedMsg),
 		createTxRequests:    make(chan createTxRequest),
 		unlockRequests:      make(chan unlockRequest),
 		lockRequests:        make(chan struct{}),

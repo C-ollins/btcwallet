@@ -412,8 +412,11 @@ func (c *BitcoindClient) RescanBlocks(
 
 // Rescan rescans from the block with the given hash until the current block,
 // after adding the passed addresses and outpoints to the client's watch list.
-func (c *BitcoindClient) Rescan(blockHash *chainhash.Hash,
-	addresses []btcutil.Address, outPoints map[wire.OutPoint]btcutil.Address) error {
+func (c *BitcoindClient) Rescan(startHeight int64) error {
+
+	var blockHash *chainhash.Hash
+	var addresses []btcutil.Address
+	var outPoints map[wire.OutPoint]btcutil.Address
 
 	// A block hash is required to use as the starting point of the rescan.
 	if blockHash == nil {
