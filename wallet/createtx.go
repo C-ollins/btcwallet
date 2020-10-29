@@ -55,6 +55,63 @@ func makeInputSource(eligible []wtxmgr.Credit) txauthor.InputSource {
 	}
 }
 
+func makeIgnoredInputSource(eligible []wtxmgr.Credit) txauthor.InputSource {
+	// Pick largest outputs first.  This is only done for compatibility with
+	// previous tx creation code, not because it's a good idea.
+	sort.Sort(sort.Reverse(byAmount(eligible)))
+
+	// Current inputs and their total value.  These are closed over by the
+	// returned input source and reused across multiple calls.
+	currentTotal := btcutil.Amount(0)
+	currentInputs := make([]*wire.TxIn, 0, len(eligible))
+	currentScripts := make([][]byte, 0, len(eligible))
+	currentInputValues := make([]btcutil.Amount, 0, len(eligible))
+
+	return func(target btcutil.Amount) (btcutil.Amount, []*wire.TxIn,
+		[]btcutil.Amount, [][]byte, error) {
+
+		for len(eligible) != 0 {
+			nextCredit := &eligible[0]
+			eligible = eligible[1:]
+			nextInput := wire.NewTxIn(&nextCredit.OutPoint, nil, nil)
+			currentTotal += nextCredit.Amount
+			currentInputs = append(currentInputs, nextInput)
+			currentScripts = append(currentScripts, nextCredit.PkScript)
+			currentInputValues = append(currentInputValues, nextCredit.Amount)
+		}
+		return currentTotal, currentInputs, currentInputValues, currentScripts, nil
+	}
+}
+
+func (w *Wallet) MakeInputSource(account uint32, minconf int32, sendmax bool) (txauthor.InputSource, error) {
+	chainClient, err := w.requireChainClient()
+	if err != nil {
+		return nil, err
+	}
+
+	dbtx, err := w.db.BeginReadWriteTx()
+	if err != nil {
+		return nil, err
+	}
+	defer dbtx.Rollback()
+
+	// Get current block's height and hash.
+	bs, err := chainClient.BlockStamp()
+	if err != nil {
+		return nil, err
+	}
+
+	eligible, err := w.findEligibleOutputs(dbtx, account, minconf, bs)
+	if err != nil {
+		return nil, err
+	}
+
+	if sendmax {
+		return makeIgnoredInputSource(eligible), nil
+	}
+	return makeInputSource(eligible), nil
+}
+
 // secretSource is an implementation of txauthor.SecretSource for the wallet's
 // address manager.
 type secretSource struct {
