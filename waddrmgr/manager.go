@@ -1817,6 +1817,6 @@ func Create(ns walletdb.ReadWriteBucket, seed, pubPassphrase, privPassphrase []b
 		return maybeConvertDbError(err)
 	}
 
-	// Use 48 hours as margin of safety for wallet birthday.
-	return putBirthday(ns, birthday.Add(-48*time.Hour))
+	// Use 2 hours as margin of safety for wallet birthday.
+	return putBirthday(ns, birthday.Add(-2*time.Hour))
 }

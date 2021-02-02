@@ -151,9 +151,59 @@ func (w *Wallet) BirthdayBlock() (*waddrmgr.BlockStamp, error) {
 		manager: w.Manager,
 	}
 
-	return birthdaySanityCheck(
+	birthdayStamp, err := birthdaySanityCheck(
 		chainClient, birthdayStore,
 	)
+	if err != nil && !waddrmgr.IsError(err, waddrmgr.ErrBirthdayBlockNotSet) {
+		return nil, err
+	}
+
+	if birthdayStamp == nil {
+		var err error
+		birthdayStamp, err = locateBirthdayBlock(chainClient, w.Manager.Birthday())
+		if err != nil {
+			return nil, fmt.Errorf("unable to locate birthday block: %v",
+				err)
+		}
+
+		// We'll also determine our initial sync starting height. This
+		// is needed as the wallet can now begin storing blocks from an
+		// arbitrary height, rather than all the blocks from genesis, so
+		// we persist this height to ensure we don't store any blocks
+		// before it.
+		startHeight := birthdayStamp.Height
+
+		// With the starting height obtained, get the remaining block
+		// details required by the wallet.
+		startHash, err := chainClient.GetBlockHash(int64(startHeight))
+		if err != nil {
+			return nil, err
+		}
+
+		startHeader, err := chainClient.GetBlockHeader(startHash)
+		if err != nil {
+			return nil, err
+		}
+
+		err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+			ns := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+			err := w.Manager.SetSyncedTo(ns, &waddrmgr.BlockStamp{
+				Hash:      *startHash,
+				Height:    startHeight,
+				Timestamp: startHeader.Timestamp,
+			})
+			if err != nil {
+				return err
+			}
+			return w.Manager.SetBirthdayBlock(ns, *birthdayStamp, true)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unable to persist initial sync "+
+				"data: %v", err)
+		}
+	}
+
+	return birthdayStamp, nil
 }
 
 // SynchronizeRPC associates the wallet with the consensus RPC client,
@@ -415,7 +465,6 @@ func (w *Wallet) RollbackMissingBlocks(birthdayStamp *waddrmgr.BlockStamp) error
 	return err
 
 }
-
 
 // isDevEnv determines whether the wallet is currently under a local developer
 // environment, e.g. simnet or regtest.
@@ -3608,21 +3657,21 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 	log.Infof("Opened wallet") // TODO: log balance? last sync height?
 
 	w := &Wallet{
-		publicPassphrase:    pubPass,
-		db:                  db,
-		Manager:             addrMgr,
-		TxStore:             txMgr,
-		lockedOutpoints:     map[wire.OutPoint]struct{}{},
-		recoveryWindow:      recoveryWindow,
-		createTxRequests:    make(chan createTxRequest),
-		unlockRequests:      make(chan unlockRequest),
-		lockRequests:        make(chan struct{}),
-		holdUnlockRequests:  make(chan chan heldUnlock),
-		lockState:           make(chan bool),
-		changePassphrase:    make(chan changePassphraseRequest),
-		changePassphrases:   make(chan changePassphrasesRequest),
-		chainParams:         params,
-		quit:                make(chan struct{}),
+		publicPassphrase:   pubPass,
+		db:                 db,
+		Manager:            addrMgr,
+		TxStore:            txMgr,
+		lockedOutpoints:    map[wire.OutPoint]struct{}{},
+		recoveryWindow:     recoveryWindow,
+		createTxRequests:   make(chan createTxRequest),
+		unlockRequests:     make(chan unlockRequest),
+		lockRequests:       make(chan struct{}),
+		holdUnlockRequests: make(chan chan heldUnlock),
+		lockState:          make(chan bool),
+		changePassphrase:   make(chan changePassphraseRequest),
+		changePassphrases:  make(chan changePassphrasesRequest),
+		chainParams:        params,
+		quit:               make(chan struct{}),
 	}
 
 	w.NtfnServer = newNotificationServer(w)
